@@ -13,7 +13,7 @@ rsense_complete
 	<key>keyEquivalent</key>
 	<string>~</string>
 	<key>name</key>
-	<string>Complete method from RSense</string>
+	<string>Completion: Ruby (RSense)</string>
 	<key>output</key>
 	<string>showAsTooltip</string>
 	<key>scope</key>
