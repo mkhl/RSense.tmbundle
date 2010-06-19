@@ -31,13 +31,13 @@ class RSenseCompletions
     "#{e_sh ruby} #{e_sh rsense} code-completion --file=#{e_sh path} --location=#{@line}:#{@column}"
   end
   
-  def rsense_completions
-    `#{command}`
+  def rsense_completions(path)
+    `#{command path}`
   end
 
-  def completion_list
+  def completion_list(file = nil)
     completions = []
-    rsense_completions.each do |comp|
+    rsense_completions(file).each do |comp|
       if comp.match /^completion:\s*(\S+)\s*(\S+)/
         name, full = $1, $2
         completions << [name, full] if name.start_with? prefix or prefix.nil?
