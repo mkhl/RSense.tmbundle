@@ -1,5 +1,4 @@
-require File.dirname(__FILE__) + "/../lib/rsense_completions"
-
+require "#{File.dirname(__FILE__)}/../lib/rsense_completions"
 
 describe RSenseCompletions do
   it "should compute correct column for method completion when method is empty" do

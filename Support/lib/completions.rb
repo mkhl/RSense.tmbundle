@@ -1,10 +1,8 @@
 #!/usr/bin/env ruby
 
-require ENV['TM_SUPPORT_PATH'] + '/lib/web_preview.rb'
-require ENV['TM_SUPPORT_PATH'] + '/lib/textmate.rb'
-require ENV['TM_SUPPORT_PATH'] + '/lib/ui.rb'
+require "#{ENV['TM_SUPPORT_PATH']}/lib/ui"
 
-require File.dirname(__FILE__) + '/rsense_completions'
+require "#{ENV['TM_BUNDLE_SUPPORT']}/lib/rsense_completions"
 
 rsense = RSenseCompletions.new
 
