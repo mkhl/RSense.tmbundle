@@ -1,50 +1,48 @@
 #!/usr/bin/env ruby
 
 class RSenseCompletions
-  attr_accessor :tm_line_index, :tm_line_number, :tm_current_line
-  
-  def current_line_ends_with_dot?
-    @tm_current_line[(@tm_line_index-1)..(@tm_line_index-1)] == "."
-  end
-  
-  def contains_dot?
-    @tm_current_line[0..@tm_line_index].include?(".")
-  end
-  
-  def column
-    @tm_line_index - self.prefix.to_s.length - 1
-  end
-  
-  def prefix
-    if self.current_line_ends_with_dot?
-      nil
-    else
-      if self.contains_dot?
-        @tm_current_line[@tm_current_line.rindex(".")..@tm_line_index][1..-1].strip
-      else
-        @tm_current_line[0..@tm_line_index].strip
-      end
-    end
+  attr_reader :cursor, :line, :text, :prefix, :column
+
+  def initialize(cursor = nil, line = nil, text = nil)
+    @cursor = cursor || ENV['TM_LINE_INDEX'].to_i
+    @line   = line   || ENV['TM_LINE_NUMBER'].to_i
+    @text   = text   || ENV['TM_CURRENT_LINE']
+    @prefix, @column = find_prefix if @text
   end
 
-  def rsense_location
-    "'#{File.join(ENV['TM_BUNDLE_SUPPORT'], "vendor", "rsense", "bin", "rsense")}'"
+  def find_prefix
+    column = @text.rindex(".", @cursor) || 0
+    prefix = @text[column...@cursor]
+    prefix.sub!(/^\./, '')
+    prefix.strip!
+    [prefix, column]
   end
-  
-  def cmd
-    "/usr/bin/ruby #{rsense_location} code-completion --file='#{ENV['TM_FILEPATH']}' --location=#{@tm_line_number}:#{column}"
+
+  def ruby
+    ENV["TM_RUBY"] || "ruby"
+  end
+
+  def rsense
+    "#{ENV['TM_BUNDLE_SUPPORT']}/vendor/rsense/bin/rsense"
+  end
+
+  def command(path)
+    require "#{ENV['TM_SUPPORT_PATH']}/lib/escape"
+    "#{e_sh ruby} #{e_sh rsense} code-completion --file=#{e_sh path} --location=#{@line}:#{@column}"
   end
   
   def rsense_completions
-    `#{cmd}`
+    `#{command}`
   end
 
   def completion_list
-    possibilities = self.rsense_completions.split("\n").map{|x| x.chomp}.map{|x| x.match(/completion: ([^\s]+) ([^\s]+)/)[1..2] rescue nil}.compact.sort
-    if prefix
-      possibilities.select{|x| x[0].start_with?(prefix)}.uniq
-    else
-      possibilities.uniq
+    completions = []
+    rsense_completions.each do |comp|
+      if comp.match /^completion:\s*(\S+)\s*(\S+)/
+        name, full = $1, $2
+        completions << [name, full] if name.start_with? prefix or prefix.nil?
+      end
     end
+    completions.sort.uniq
   end
 end
