@@ -1,3 +1,5 @@
+#!/usr/bin/env ruby
+
 require ENV['TM_SUPPORT_PATH'] + '/lib/web_preview.rb'
 require ENV['TM_SUPPORT_PATH'] + '/lib/textmate.rb'
 require ENV['TM_SUPPORT_PATH'] + '/lib/ui.rb'

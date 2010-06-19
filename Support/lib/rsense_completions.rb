@@ -1,3 +1,5 @@
+#!/usr/bin/env ruby
+
 class RSenseCompletions
   attr_accessor :tm_line_index, :tm_line_number, :tm_current_line
   
