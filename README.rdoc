@@ -13,7 +13,7 @@ RSense.tmbundle uses the command line interface to RSense and has the same requi
 
 == Usage
 
-Complete the name of a method using Ctrl + Esc.  The method completion is content-aware:
+Complete the name of a method using Option + Esc.  The method completion is content-aware:
 
   module MyModule
     def self.foo(a)
@@ -27,4 +27,4 @@ with the caret at the last position would offer completions "strip", "strip!" an
 
 == License
 
-Rsense.tmbundle is distributed under the terms of GPLv3.
+RSense.tmbundle is distributed under the terms of GPLv3.
