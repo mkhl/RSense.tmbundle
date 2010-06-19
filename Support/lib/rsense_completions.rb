@@ -26,7 +26,7 @@ class RSenseCompletions
   end
 
   def rsense_location
-    "'#{File.join(ENV['TM_BUNDLE_SUPPORT'], "rsense-0.2", "bin", "rsense")}'"
+    "'#{File.join(ENV['TM_BUNDLE_SUPPORT'], "vendor", "rsense", "bin", "rsense")}'"
   end
   
   def cmd
