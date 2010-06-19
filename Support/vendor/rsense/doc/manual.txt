@@ -20,21 +20,24 @@ Introduction
 
 ### What is RSense? ###
 
-RSense is a development tools for [Ruby][], which is written in Java. Following [UNIX philosophy][], RSense can be used from anywhere easily. Generally, it is used from editors such like Emacs, Vim, etc. We are struggling to keep a transparency for hackers to learn, extend, and fix easily.
+RSense is a [Ruby][] development tools, which is specialized for high function text editors such as [Emacs][], [Vim][], etc. Following [UNIX philosophy][], RSense has a high transparency and is easy to learn, extend and fix for users. Adopting copyleft license, it also keeps being a [free software](http://www.gnu.org/philosophy/free-sw.html).
 
 ### Features ###
 
-Main available features are:
-
 * Code completion
 * Type inspection
+* Definition jump
 
-In the future, the following features will be also available:
+In the future, the following features will be available:
 
 * Static code checking
-* Definition jump
 * Caller jump
 * Refactoring
+
+Downloads
+---------
+
+You can download from [RSense top page](index.txt).
 
 Installation
 ------------
@@ -45,7 +48,6 @@ Installation
 * JRE 1.5 or later
   * SunJDK or OpenJDK
 * Editors
-
   * Emacs
   * Vim
 
@@ -87,7 +89,7 @@ For later sections, `RSENSE_HOME` environment variable should be read as a direc
     $ echo $RSENSE_HOME
     /home/tomo/opt/rsense-0.1
 
-After installation, make sure that you can execute `bin/rsnese` script which hides a complexity about server/client model.
+After installation, make sure that you can execute `bin/rsnese` script. This script has a role hiding a complexity about server/client model and executes server on demand automatically by using `fork(2)` and `setsid(2)` in UNIX-like systems. So there is no need to care about server/client model for users.
 
     $ cd $RSENSE_HOME
     $ chmod +x bin/rsense
@@ -108,19 +110,53 @@ You may copy the package directory to `C:\\` or `C:\\Program Files`. For later s
 
     > echo %RSENSE_HOME%
     C:\rsense-0.1
+    > echo %RSENSE_HOME%
 
-After installation, make sure that you can execute `bin\rsense` script which hides a complexity about server/client model. Unlink unix-like systems, Windows doesn't have `fork(2)` and `setsid(2)`, `bin\rsense` can't run service program in background. So **you have to run server first** and then run client.
+After installation, make sure that you can execute `bin\rsense` script, which hides a complexity about server/client model. Unlike UNIX-like systems, Windows doesn't have effective ways to execute server in background automatically, so **users need to execute server manually**. There are two ways to execute server. One is to execute `bin\rsense` with passing `server` command in command prompt and another is to execute as Windows service. **You need to execute server before using RSense in both case**. To execute in command prompt, execute the folloing command:
 
-    > cd %RSENSE_HOME%
     > ruby bin\rsense server
+
+To execute as Windows service, first of all, you need to install `win32-service` from RubyGems as following. `gem` program must be installed, but almost installers install `gem` program automatically.
+
+    > gem install win32-service
+
+Then, register RSense as a Windows service.
+
+    > ruby bin\rsense service create
+
+To delete service, do
+
+    > ruby bin\rsense service delete
+
+To start the service, click "Start" label in "Services" or do
+
+    > ruby bin\rsense service start
+    Service started
+
+You can also use `net` program.
+
+    > net start RSense
+
+To stop the service, clik "Stop" label in "Services" or do
+
+    > ruby bin\rsense service stop
+    Service stopped
+
+You can also use `net` program.
+
+    > net stop RSense
+
+To see service status, do
+
+    > ruby bin\rsense service status
+    Running
 
 Server will be listening to TCP/77367 by default. Then run client in another command prompt:
 
-    > cd %RSENSE_HOME%
     > ruby bin\rsense version
     RSense 0.1
 
-Finally create a config file named `%HOME%\\.rsense` that tells RSense `load-path` and `gem-path` of Ruby runtime. If you don't set `HOME` environment variable, you can see its default value and set by:
+You may find it is correctly running. Finally create a config file named `%HOME%\\.rsense` that tells RSense `load-path` and `gem-path` of Ruby runtime. If you don't set `HOME` environment variable, you can see its default value and set by:
 
     > echo %HOME%
     %HOME%
@@ -141,15 +177,23 @@ A script located at `etc\config.rb` creates a preferred config file automaticall
 An Emacs extension for RSense is found at `etc/rsense.el`. Add the following code to `.emacs`:
 
     ;; Replace $RSENSE_HOME with the directory where RSense was installed in full path
+    ;; Example for UNIX-like systems
+    ;; (setq rsense-home "/home/tomo/opt/rsense-0.2")
+    ;; or
+    ;; (setq rsense-home (expand-file-name "~/opt/rsense-0.2"))
+    ;; Example for Windows
+    ;; (setq rsense-home "C:\\rsense-0.2")
     (setq rsense-home "$RSENSE_HOME")
     (add-to-list 'load-path (concat rsense-home "/etc"))
     (require 'rsense)
+
+There is no need to setup `load-path` with `add-to-list` if you copy `etc/rsense.el` to `load-path` directories.
 
 You also need to install [`auto-complete-mode`](http://cx4a.org/software/auto-complete/) if you want to use with `aut-complete-mode`. See documentation for how to install.
 
 ### Install Vim Plugin ###
 
-An Vim plugin for RSense is found at `etc/rsense.vim`. Just copy `etc/rsense.vim` to your plugins directory. For unix-like systems:
+An Vim plugin for RSense is found at `etc/rsense.vim`. Just copy `etc/rsense.vim` to your plugins directory. For UNIX-like systems:
 
     $ mkdir -p ~/.vim/plugin
     $ cp etc/rsense.vim ~/.vim/plugin
@@ -168,11 +212,13 @@ Then write the following code to `.vimrc`:
 Usage
 -----
 
-**For Windows, you have to run server before anytime you use client**, as we said. See [installation](#Windows) section.
+**For Windows, you have to run server before anytime you use client**, as we said. See [installation](#Windows) section for details.
 
 ### Emacs ###
 
-First of all, you should make sure that you can use RSense from Emacs by `M-x rsense-version`. If you see nothing, there is a problem probably. See [trouble shooting](#Trouble_Shooting).
+First of all, you should make sure that you can see RSense version information by `M-x rsense-version`. If you see nothing, there is a problem probably. See [trouble shooting](#Trouble_Shooting).
+
+#### Code Completion #### {#Code_Completion_in_Emacs}
 
 You can complete method name and constant name by `M-x rsense-complete` after `.` and `::`.
 
@@ -203,11 +249,23 @@ If you want to start completion automatically after inserting `.` and `::`, add 
                 (add-to-list 'ac-sources 'ac-source-rsense-method)
                 (add-to-list 'ac-sources 'ac-source-rsense-constant)))
 
-You can also infer types of an expression at point by `M-x rsense-type-help`
+#### Type Help #### {#Type_Help_in_Emacs}
+
+You can infer types of an expression at point by `M-x rsense-type-help`
 
 ![](rsense-emacs-3.png)
 
 If you don't have `popup.el`, it shows types in minibuffer.
+
+#### Definition Jump #### {#Definition_Jump_in_Emacs}
+
+You can jump to definition of a method or a constant you are pointing at by `M-x rsense-jump-to-definition`.
+
+#### Where Is #### {#Where_Is_in_Emacs}
+
+You can find which class/method you are editing by `M-x rsense-where-is`.
+
+#### Other Commands #### {#Other_Commands_in_Emacs}
 
 There are other commands operating a project and RSense itself.
 
@@ -220,6 +278,15 @@ There are other commands operating a project and RSense itself.
 `rsense-close-project`
 : Close currently opened project.
 
+`rsense-service-start`
+: Start Windows service.
+
+`rsense-service-stop`
+: STop Windows service.
+
+`rsense-service-status`
+: Show Windows service status.
+
 `rsense-clear`
 : Clear current environment.
 
@@ -227,6 +294,10 @@ There are other commands operating a project and RSense itself.
 : Exit RSense server.
 
 ### Vim ###
+
+First of all, you should make sure that you can see RSense version information by `:RSenseVersion`. If you see nothing, there is a problem probably. See [trouble shooting](#Trouble_Shooting).
+
+#### Code Completion #### {#Code_Completion_in_Vim}
 
 You can complete method name and constant name by `^X ^U` after `.` and `::`.
 
@@ -238,13 +309,51 @@ If you want to start completion automatically, add the following code to `.vimrc
 
 If you don't use `autocomplpop.vim` or related plugins, you need to type `^X ^O` to start omni completion.
 
-Currently, Vim plugin is experimentally implemented, because I am not familiar with Vim script. So no commands are available for Vim. Use [Command Line Interface](#) instead at now.
+#### Type Help #### {#Type_Help_in_Vim}
+
+You can infer types of an expression at point by `:RSenseTypeHelp`.
+
+#### Definition Jump #### {#Definition_Jump_in_Vim}
+
+You can jump to definition of a method or a constant you are pointing at by `:RSenseJumpToDefinition`.
+
+#### Where Is #### {#Where_Is_in_Vim}
+
+You can find which class/method you are editing by `:RSenseWhereIs`.
+
+#### Other Commands #### {#Other_Commands_in_Vim}
+
+There are other commands operating a project and RSense itself.
+
+`:RSenseVersion`
+: See RSense version.
+
+`:RSenseOpenProject`
+: Open a project of specified directory.
+
+`:RSenseCloseProject`
+: Close currently opened project.
+
+`:RSenseServiceStart`
+: Start Windows service.
+
+`:RSenseServiceStop`
+: STop Windows service.
+
+`:RSenseServiceStatus`
+: Show Windows service status.
+
+`:RSenseClear`
+: Clear current environment.
+
+`:RSenseExit`
+: Exit RSense server.
 
 ### Command Line Interface ###
 
 You can also use RSense from terminal as CLI (command line interface). There are two CLI frontends in RSense. The first one is called [*primitive frontend*](#Primitive_Frontend) which means only one process can run once a command. The second one is called [*wrapper frontend*](#Wrapper_Frontend) which means you don't have to care about processes. In other words, in wrapper frontend, you can execute a command regardless server/client model and initialization time. Wrapper frontend would be used in general.
 
-Code examples for later sections are valid only for unix-like systems.
+Code examples for later sections are valid only for UNIX-like systems.
 
 #### Primitive Frontend ####
 
@@ -266,6 +375,8 @@ For example, `--location=123` means completions will be collected at an offset 1
 
 An unit of offset number and column number is not byte based but character based. If a source code contains non-ascii characters, you may have to specify an encoding by `--encoding=` option. An encoding string must follow [Java Supported Encodings][].
 
+The each line of the result takes a form of `comletion: <name> <qualified-name> <base-name> <kind>`. `<kind>` can be one of `CLASS`, `MODULE`, `CONSTANT`, and `METHOD`.
+
 **Example:**
 
 Classpath option is omitted.
@@ -273,15 +384,15 @@ Classpath option is omitted.
     $ cat test1.rb
     1
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=1
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=1:1
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     $ cat test2.rb
     1_|_
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=_|_
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
 
 ##### `type-inference` command #####
@@ -300,6 +411,38 @@ Same to [`code-completion` command](#) except this command collects types of exp
     1_|_
     $ java -cp ... org.cx4a.rsense.Main type-inference --file=test1.rb --location=_|_
     type: Fixnum
+
+##### `find-definition` command #####
+
+This command will tell you where a definition of the method is by pointing a method call or a constant reference with `--file=` option and `--location=` option. The output will be take a form of `location: <line> <filename>`.
+
+**Example:**
+
+    $ cat test.rb
+    class C
+      def f() end
+    end
+    class D
+      def f() end
+    end
+    D.new.f_|_
+    $ java -cp ... org.cx4a.rsense.Main find-definition --file=test.rb
+    location: 5 test.rb
+
+##### `where` command #####
+
+This commad will tell you where you are editing at by specifying file name with `--file=` option and line number with `--line=`. The output will be a qualified class name or method name like `Array` and `String#split`.
+
+**Example:**
+
+    $ cat test.rb
+    class C
+      def f
+        1
+      end
+    end
+    $ java -cp ... org.cx4a.rsense.Main where --file=test.rb --line=3
+    name: C#f
 
 ##### `load` command #####
 
@@ -325,7 +468,7 @@ Some extra commands are allowed in script mode. `exit` or `quit` commands exit R
     > code-completion
     1_|_
     EOF
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     ^D
     $ cat test.rsense
@@ -381,9 +524,21 @@ You can see debug messages by specifying this option.
 
 You can keep log messages into a file by specifying this option.
 
+##### `--progress=` option #####
+
+Specifying this option with/without interval in second, RSense will print progress of the specified command.
+
 ##### `--format=` option #####
 
 Specifying this option, a command output will be formatted in the specified rule. Available format are `plain` and `emacs`. Default is `plain`.
+
+##### `--verbose` option #####
+
+Specifying this option, command output will be verbose.
+
+##### `--time` option #####
+
+Report an elapsed time of the specified command.
 
 ##### `--encoding=` option #####
 
@@ -484,7 +639,7 @@ Limitations
 Currently the following features are not supported:
 
 * `eval`
-* `proc` and `lambda`
+* `proc` and `lambda` without block
 * `callcc`
 * `raise` and `rescue` flow analysis
 * `Struct`
@@ -497,6 +652,7 @@ Trouble Shooting
 
 Check list:
 
+* Server or service is running?
 * Ruby interpreter is executable?
 * Java program is executable?
 * Primitive frontend works well?
@@ -509,7 +665,7 @@ Check list:
   
   For Windows:
   ~~~~
-  > java -cp lib\jruby.jar:lib\antlr-runtime-3.2.jar:lib\rsense.jar org.cx4a.rsense.Main version
+  > java -cp lib\jruby.jar;lib\antlr-runtime-3.2.jar;lib\rsense.jar org.cx4a.rsense.Main version
   RSense 0.1
   ~~~~
 
@@ -517,28 +673,47 @@ Check list:
 
   For UNIX-like systems:
   ~~~~
-  $ bin/ruby server
+  $ bin/rsense server
   ...
   ^C
-  $ bin/ruby version
+  $ bin/rsense version
   RSense 0.1
   ~~~~
   
   For Windows:
   ~~~~
-  > ruby bin\ruby version
-  > ruby bin\ruby server
+  > ruby bin\rsense server
   ...
   ^C
+  > ruby bin\rsense version
   RSense 0.1
   ~~~~
 
 * A configuration of Emacs or Vim is correct?
 
+  `rsense-home` variable in Emacs or `g:rsenseHome` variable in Vim should be full path. For example, the following code is not allowed at now.
+  ~~~~
+  (setq rsense-home "~/opt/rsense-0.2")
+  ~~~~
+  Use `expand-file-name` to expand to full path or write full path directly.
+  ~~~~
+  (setq rsense-home (expand-file-name "~/opt/rsense-0.2"))
+  ;; or
+  (setq rsense-home "/home/tomo/opt/rsense-0.2")
+  ~~~~
+
 If there is no problem in check list, kill `java` and `ruby` processes of RSense and delete pid file located. And then try again. Pid file is located at `$RSENSE_HOME/rsense-pid` or `/tmp/rsense-pid` for UNIX-like systems, and located at `%RSENSE_HOME%\rsense-pid` for Windows.
 
 Please contant me you couldn't resolve the problem.
 
+Reporting Bugs
+--------------
+
+Visit [RSense Bug Tracking System](http://cx4a.org/redmine/projects/rsense) and create a new ticket.
+
+[Emacs]: http://www.gnu.org/software/emacs/
+[Vim]: http://www.vim.org/
 [Ruby]: http://www.ruby-lang.org/ "Ruby Programming Language"
+[Rumix]: http://ruby.morphball.net/rumix/
 [UNIX philosophy]: http://en.wikipedia.org/wiki/Unix_philosophy
 [Java Supported Encodings]: http://java.sun.com/j2se/1.5.0/docs/guide/intl/encoding.doc.html

@@ -20,32 +20,34 @@ RSense ユーザーマニュアル
 
 ### RSenseとは？ ###
 
-RSenseはJavaで書かれた[Ruby][]のための開発補助ツールです。[UNIXの思想][UNIX philosophy]に従うことで、RSenseはどこからでも簡単に使えるようになっています。EmacsやVimなどのエディタからも利用できます。RSenseは透明性を保つことで簡単に学習・拡張・修正できるよう設計されています。
+RSenseは[Emacs][]や[Vim][]などの高機能テキストエディタに特化した[Ruby][]のための開発援助ツールです。[UNIXの思想][UNIX philosophy]に従うことで高い透明性を実現し、ユーザーが簡単に学習・拡張・修正できるように設計されています。また、コピーレフトライセンス（GPLv3+）を採用することで、自由なソフトウェアであり続けることを保証しています。
 
 ### 特徴 ###
 
-現在利用可能な機能は以下のようになっています。
-
 * コード補完（メソッド名補完など）
 * 型検査
+* 定義元ジャンプ
 
-将来は以下の機能も利用可能になる予定です。
+将来的には以下の機能も利用可能になる予定です。
 
 * 静的コードチェック
-* 定義元ジャンプ
 * 呼び出し元ジャンプ
 * リファクタリング
+
+ダウンロード
+------------
+
+[RSenseのトップページ](index.ja.txt)からダウンロードできます。
 
 インストール
 ------------
 
-### 必要条件 ###
+### 要件 ###
 
 * Ruby 1.8.x
-* JRE 1.5 or ater
+* JRE 1.5 or later
   * SunJDK or OpenJDK
 * エディタ
-
   * Emacs
   * Vim
 
@@ -57,7 +59,7 @@ UNIX系システムを使ってる場合、パッケージマネージャを使�
 
     apt-get install ruby
 
-Windowsではインストーラを使ってインストールするのがよいでしょう。インストーラは[Rubyのダウンロードページ](http://www.ruby-lang.org/en/downloads/)から見つかります。RSenseは[Rumix](http://ruby.morphball.net/rumix/)を使ってテストしています。
+Windowsではインストーラを使うのがよいでしょう。インストーラは[Rubyのダウンロードページ](http://www.ruby-lang.org/en/downloads/)から見つかります。RSenseは[Rumix][]を使ってテストしています。
 
 Rubyインタプリタを起動できるよう`PATH`環境変数を変更することを忘れないでください。大抵の場合はインストーラがやってくれます。
 
@@ -68,7 +70,7 @@ Rubyインタプリタを起動できるよう`PATH`環境変数を変更する�
 
 ### JREのインストール ###
 
-Java Runtime Environment 1.5あるいはそれ以降のバージョンをインストールする必要がありあす。[SunJDK](http://java.sun.com/javase/downloads/index.jsp)と[OpenJDK](http://openjdk.java.net/)をサポートしています。例えばDebian GNU/Linuxでは次のようにインストールします。
+Java Runtime Environment 1.5あるいはそれ以降のバージョンをインストールする必要があります。[SunJDK](http://java.sun.com/javase/downloads/index.jsp)と[OpenJDK](http://openjdk.java.net/)をサポートしています。例えばDebian GNU/Linuxでは次のようにインストールします。
 
     $ apt-get install openjdk-6-jdk # or openjdk-6-jre
 
@@ -82,12 +84,12 @@ Java Runtime Environment 1.5あるいはそれ以降のバージョンをイン�
 
     $ cp -av rsense-0.1 ~/opt
 
-本節以降は`RSENSE_HOME`環境変数をインストールしたディレクトリに読みかえてください。
+本節以降は`RSENSE_HOME`環境変数を、ここでインストールしたディレクトリに読みかえてください。
 
     $ echo $RSENSE_HOME
     /home/tomo/opt/rsense-0.1
 
-インストール後はサーバー/クライアントモデルの複雑さを隠蔽する`bin/rsense`スクリプトが実行できることを確認してください。
+インストール後は`bin/rsense`スクリプトが実行できることを確認してください。このスクリプトはサーバー/クライアントモデルの複雑さを隠蔽する役割を持っており、UNIX系システムでは`fork(2)`と`setsid(2)`を利用して必要な時に自動的にサーバーを起動するようになっています。そのためユーザーはサーバー/クライアントを特に意識することなく利用できます。
 
     $ cd $RSENSE_HOME
     $ chmod +x bin/rsense
@@ -104,23 +106,57 @@ Java Runtime Environment 1.5あるいはそれ以降のバージョンをイン�
 
 #### Windows ####
 
-パッケージディレクトリをどこかのディレクトリにコピーしてください。大抵の場合は`C:\\`あるいは`C:\\Program Files`になるでしょう。本節以降は`RSENSE_HOME`環境変数をインストールしたディレクトリに読みかえてください。
+パッケージディレクトリをどこかのディレクトリにコピーしてください。大抵の場合は`C:\\`あるいは`C:\\Program Files`になるでしょう。本節以降は`RSENSE_HOME`環境変数を、ここでインストールしたディレクトリに読みかえてください。
 
     > echo %RSENSE_HOME%
     C:\rsense-0.1
-
-インストール後はサーバー/クライアントモデルの複雑さを隠蔽する`bin\rsense`スクリプトが実行できることを確認してください。UNIX系システムと違って、Windowsは`fork(2)`や`setsid(2)`を持たないので、`bin\rsense`は自動的にサービスプログラムを起動することができません。そのため**クライアントを実行するまえにサーバーを起動しておく必要があります**。
-
     > cd %RSENSE_HOME%
+
+インストール後は`bin\rsense`スクリプトが実行できることを確認してください。このスクリプトはサーバー/クライアントモデルの複雑さを隠蔽する役割を持っています。ただし、UNIX系システムとは違ってWindowsでは自動的にサーバーを起動する有効な手段がないため、**ユーザーは手動でサーバーを起動する必要があります**。サーバーを起動するには二つの方法があり、一つはコマンドプロンプト内で`bin\rsense`に`server`コマンドを渡して起動する方法、もう一つはRSenseをWindowsサービスとして起動する方法です。**どちらの方法もRSenseの利用に先立ってサーバーあるいはサービスを起動しておく必要があります**。コマンドプロンプト内で起動する場合は次のコマンドを実行します。
+
     > ruby bin\rsense server
 
-サーバーはデフォルトでTCP/77367をリッスンします。次に別のコマンドプロンプトからクライアントを実行します。
+RSenseをWindowsサービスとして動作させるためにはまず、次のようにRubyGemsから`win32-service`をインストールする必要があります。インストールには`gem`プログラムが必要になりますが、大抵のRubyインストーラは同時に`gem`をインストールしてくれます。
 
-    > cd %RSENSE_HOME%
+    > gem install win32-service
+
+次にRSenseをWindowsサービスとして登録します。この作業は最初に一度だけ行います。
+
+    > ruby bin\rsense service create
+
+サービスの削除は次のようにします。
+
+    > ruby bin\rsense service delete
+
+登録されたサービスを起動するには、「コントロールパネル」>「コンピュータの管理」>「サービス」からRSenseを選択し「起動」するか、次のコマンドを実行します。
+
+    > ruby bin\rsense service start
+    Service started
+
+`net`プログラムを利用することも可能です。
+
+    > net start RSense
+
+サービスを停止するには、同様に「サービス」からRSenseを選択し「停止」するか、次のコマンドを実行します。
+
+    > ruby bin\rsense service stop
+    Service stopped
+
+`net`プログラムを利用することも可能です。
+
+    > net stop RSense
+
+サービスの状態は次のように確認できます。
+
+    > ruby bin\rsense service status
+    Running
+
+サーバーはデフォルトでTCP/77367をリッスンします。サーバーを`ruby bin\rsense server`もしくはサービスで起動した後に、別のコマンドプロンプトからクライアントを実行してみましょう。
+
     > ruby bin\rsense version
     RSense 0.1
 
-最後に`%HOME%\\.rsense`という名前の設定ファイルを作成します。RSenseはこの設定ファイルを読み込み、`load-path`や`gem-path`といった変数を取得します。`HOME`環境変数の値は次のコマンドで見ることができます。
+正しく動作しているのが確認できると思います。最後に`%HOME%\\.rsense`という名前の設定ファイルを作成します。RSenseはこの設定ファイルを読み込み、`load-path`や`gem-path`といった変数を取得します。`HOME`環境変数の値は次のコマンドで見ることができます。
 
     > echo %HOME%
     %HOME%
@@ -142,8 +178,16 @@ Emacs拡張は`etc/rsense.el`にあります。次のコードを`.emacs`に追�
 
     ;; $RSENSE_HOMEはRSenseをインストールしたディレクトリのフルパスに置き換えてください
     (setq rsense-home "$RSENSE_HOME")
+    ;; UNIX系システムでの例
+    ;; (setq rsense-home "/home/tomo/opt/rsense-0.2")
+    ;; あるいは
+    ;; (setq rsense-home (expand-file-name "~/opt/rsense-0.2"))
+    ;; Windowsでの例
+    ;; (setq rsense-home "C:\\rsense-0.2")
     (add-to-list 'load-path (concat rsense-home "/etc"))
     (require 'rsense)
+
+`etc/rsense.el`を`load-path`の通ったディレクトリにコピーした場合は`add-to-list`による`load-path`の登録は必要ありません。
 
 [`auto-complete-mode`](http://cx4a.org/software/auto-complete/)と一緒に利用することも可能です。
 
@@ -156,8 +200,7 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
 
 で、Windowsなら
 
-    > mkdir "C:\Program Files\Vim\.plugin"
-    > copy etc\rsense.vim "C:\Program Files\Vim\.plugin\"
+    > copy etc\rsense.vim "C:\Program Files\Vim\vim72\plugin"
 
 のようになるでしょう。詳しくは`help 'runtimepath'`を参照してください。
 
@@ -169,17 +212,19 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
 使い方
 ------
 
-**Windowsの場合、はじめにサーバーを起動しておく必要があります**。[インストール](#Windows)を参照してください。
+**Windowsの場合、はじめにサーバーを起動しておく必要があります**。詳しくは[インストール](#Windows)を参照してください。
 
 ### Emacs ###
 
-まず最初に、`M-x rsense-version`で正しく動作していることを確認してください。何も出力がない場合は、おそらく正しく動作していません。[トラブルシューティング](#)を参照してください。
+まず最初に、`M-x rsense-version`でバージョン情報が表示されることを動作していることを確認してください。何も出力がない場合は、おそらく正しく動作していません。[トラブルシューティング](#)を参照してください。
+
+#### コード補完 #### {#Code_Completion_in_Emacs}
 
 `.`あるいは`::`の直後に`M-x rsense-complete`でメソッド名や定数名を補完できます。
 
 ![](rsense-emacs-1.png)
 
-次のようなキーバインドを設定するとよいかもしれません。
+次のようにキーバインドを設定するとよいかもしれません。
 
     ;; C-c .で補完
     (add-hook 'ruby-mode-hook
@@ -190,7 +235,7 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
 
 ![](rsense-emacs-2.png)
 
-次のようなキーバインドを設定するとよいかもしれません。
+次のようにキーバインドを設定するとよいかもしれません。
 
     ;; C-c .で補完
     (add-hook 'ruby-mode-hook
@@ -204,11 +249,23 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
                 (add-to-list 'ac-sources 'ac-source-rsense-method)
                 (add-to-list 'ac-sources 'ac-source-rsense-constant)))
 
-さらに`M-x rsense-type-help`でポイントしている式の型を見ることができます。
+#### 型ヘルプ #### {#Type_Help_in_Emacs}
+
+`M-x rsense-type-help`でポイントしている式の型を見ることができます。
 
 ![](rsense-emacs-3.png)
 
 `popup.el`がない場合はミニバッファに表示されます。
+
+#### 定義元ジャンプ #### {#Definition_Jump_in_Emacs}
+
+`M-x rsense-jump-to-definition`でポイントしているメソッドや定数の定義元にジャンプすることができます。
+
+#### Where Is #### {#Where_Is_in_Emacs}
+
+`M-x rsense-where-is`で編集しているクラスやメソッドの名前を確認することができます。自分が今どこを編集しているか確認するのに便利でしょう。
+
+#### その他のコマンド #### {#Other_Commands_in_Emacs}
 
 他にもプロジェクトやRSenseを操作するコマンドがあります。
 
@@ -221,13 +278,26 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
 `rsense-close-project`
 : 指定された名前のプロジェクトを閉じます。
 
+`rsense-service-start`
+: Windowsサービスを起動します。
+
+`rsense-service-stop`
+: Windowsサービスを停止します。
+
+`rsense-service-status`
+: Windowsサービスの状態を表示します。
+
 `rsense-clear`
-: 現状の環境をクリアします。
+: 現在の環境をクリアします。
 
 `rsense-exit`
-: RSenseを終了します。
+: RSenseサーバーを終了します。
 
 ### Vim ###
+
+まず最初に、`:RSenseVersion`でバージョン情報が表示されることを確認してください。何も出力がない場合は、おそらく正しく動作していません。[トラブルシューティング](#)を参照してください。
+
+#### コード補完 #### {#Code_Completion_in_Vim}
 
 `.`あるいは`::`の直後に`^X ^U`でメソッド名や定数名を補完できます。
 
@@ -239,7 +309,45 @@ Vimプラグインは`etc/rsense.vim`にあります。`etc/rsense.vim`をプラ
 
 `autocomplpop.vim`や関連するプラグインを利用していない場合は、自動的に補完されないので`^X ^O`でオムニ補完を開始してください。
 
-開発者がVimスクリプトに詳しくないので、現在のところVimプラグインは実験的な実装にとどまっています。そのためVimから使えるコマンドはありません。かわりに[コマンドラインインターフェース](#)を使ってください。
+#### 型ヘルプ #### {#Type_Help_in_Vim}
+
+`:RSenseTypeHelp`でポイントしている式の型を見ることができます。
+
+#### 定義元ジャンプ #### {#Definition_Jump_in_Vim}
+
+`:RSenseJumpToDefinition`でポイントしているメソッドや定数の定義元にジャンプすることができます。
+
+#### Where Is #### {#Where_Is_in_Vim}
+
+`:RSenseWhereIs`で編集しているクラスやメソッドの名前を確認することができます。自分が今どこを編集しているか確認するのに便利でしょう。
+
+#### その他のコマンド #### {#Other_Commands_in_Vim}
+
+他にもプロジェクトやRSenseを操作するコマンドがあります。
+
+`:RSenseVersion`
+: RSenseのバージョンを表示します。
+
+`:RSenseOpenProject`
+: 指定されたディレクトリでプロジェクトを開きます。
+
+`:RSenseCloseProject`
+: 指定された名前のプロジェクトを閉じます。
+
+`:RSenseServiceStart`
+: Windowsサービスを起動します。
+
+`:RSenseServiceStop`
+: Windowsサービスを停止します。
+
+`:RSenseServiceStatus`
+: Windowsサービスの状態を表示します。
+
+`:RSenseClear`
+: 現在の環境をクリアします。
+
+`:RSenseExit`
+: RSenseサーバーを終了します。
 
 ### コマンドラインインターフェース ###
 
@@ -267,6 +375,8 @@ RSenseはCLI(command line interface)としてターミナルから使うこと�
 
 オフセットやカラム番号の単位はバイトではなく文字です。ソースコードが非ASCII文字を含む場合は、`--encoding=`オプションで正しいエンコーディンを与える必要があるでしょう。利用可能なエンコーディングについては[Java Supported Encodings][]を参照してください。
 
+処理結果の各行は`completion: <name> <qualified-name> <base-name> <kind>`という形式をとります。`<kind>`は`CLASS`, `MODULE`, `CONSTANT`, `METHOD`のいずれかです。
+
 **例:**
 
 クラスパスオプションは省略されています。
@@ -274,15 +384,15 @@ RSenseはCLI(command line interface)としてターミナルから使うこと�
     $ cat test1.rb
     1
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=1
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=1:1
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     $ cat test2.rb
     1_|_
     $ java -cp ... org.cx4a.rsense.Main code-completion --file=test1.rb --location=_|_
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
 
 ##### `type-inference`コマンド #####
@@ -301,6 +411,38 @@ RSenseはCLI(command line interface)としてターミナルから使うこと�
     1_|_
     $ java -cp ... org.cx4a.rsense.Main type-inference --file=test1.rb --location=_|_
     type: Fixnum
+
+##### `find-definition`コマンド #####
+
+このコマンドは`--file=`オプションと`--location=`オプションで指示されたメソッド呼び出しや定数参照の定義元を検索して出力します。出力結果は`location: <line> <filename>`という形式になります。
+
+**例:**
+
+    $ cat test.rb
+    class C
+      def f() end
+    end
+    class D
+      def f() end
+    end
+    D.new.f_|_
+    $ java -cp ... org.cx4a.rsense.Main find-definition --file=test.rb
+    location: 5 test.rb
+
+##### `where`コマンド #####
+
+このコマンドは`--file=`オプションと`--line`オプションで指定された場所の直近のクラス名やメソッド名を出力します。出力結果は`Array`や`String#split`のように修飾された名前になります。
+
+**例:**
+
+    $ cat test.rb
+    class C
+      def f
+        1
+      end
+    end
+    $ java -cp ... org.cx4a.rsense.Main where --file=test.rb --line=3
+    name: C#f
 
 ##### `load`コマンド #####
 
@@ -326,7 +468,7 @@ RSenseはCLI(command line interface)としてターミナルから使うこと�
     > code-completion
     1_|_
     EOF
-    completion: succ
+    completion: succ Integer#succ Integer METHOD
     ...
     ^D
     $ cat test.rsense
@@ -382,9 +524,21 @@ RSenseのホームディレクトリを指定します。`~/.rsense`がある場
 
 ログを出力するファイルを指定します。
 
+##### `--progress=`オプション #####
+
+コマンドの進捗状況を出力します。値が省略された場合は、進捗イベントを受けとるたびに即座に出力します。整数を指定すると、その秒数だけ遅延したのちに出力します。
+
 ##### `--format=`オプション #####
 
 出力の形式を指定します。`emacs`と`plain`が利用できます。デフォルトは`plain`です。
+
+##### `--verbose`オプション #####
+
+詳細な出力を行います。
+
+##### `--time`オプション #####
+
+コマンドの実行にかかった時間を出力します。
 
 ##### `--encoding=`オプション #####
 
@@ -485,7 +639,7 @@ Rubyリファレンスマニュアル
 現在のところ以下が未対応となっています。
 
 * `eval`
-* `proc`と`lambda`
+* ブロックなしでの`proc`と`lambda`
 * `callcc`
 * `raise`と`rescue`のフロー解析
 * `Struct`
@@ -498,6 +652,7 @@ Rubyリファレンスマニュアル
 
 チェックリスト:
 
+* サーバーあるいはサービスが起動しているか
 * Rubyインタプリタが実行可能か
 * Javaプログラムが実行可能か
 * プリミティブフロントエンドが正しく動作するか
@@ -518,28 +673,47 @@ Rubyリファレンスマニュアル
 
   UNIX系システム:
   ~~~~
-  $ bin/ruby server
+  $ bin/rsense server
   ...
   ^C
-  $ bin/ruby version
+  $ bin/rsenes version
   RSense 0.1
   ~~~~
   
   Windows:
   ~~~~
-  > ruby bin\ruby version
-  > ruby bin\ruby server
+  > ruby bin\rsense server
   ...
   ^C
+  > ruby bin\rsense version
   RSense 0.1
   ~~~~
 
 * EmacsやVimの設定は正しいか
 
+  Emacsにおける`rsense-home`やVimにおける`g:rsenseHome`は**フルパス**である必要があります。例えば、
+  ~~~~
+  (setq rsense-home "~/opt/rsense-0.2")
+  ~~~~
+  という記述は認められていません。`expand-file-name`でフルパスに展開するか、フルパスをハードコードしてください。
+  ~~~~
+  (setq rsense-home (expand-file-name "~/opt/rsense-0.2"))
+  ;; あるいは
+  (setq rsense-home "/home/tomo/opt/rsense-0.2")
+  ~~~~
+
 チェックリストに問題がない場合は、RSenseの`java`と`ruby`のプロセスをキルし、pidファイルを削除したのち、最後試してください。pidファイルはUNIX系システムの場合は`$RSENSE_HOME/rsense-pid`あるいは`/tmp/rsense-pid`、Windowsの場合は`%RSENSE_HOME%\rsense-pid`にあります。
 
 それでも問題が解決できない場合は開発者に連絡してください。
 
+バグレポート
+------------
+
+[RSenseのバグトラッキングシステム](http://cx4a.org/redmine/projects/rsense)に新しいチケットを登録してください。
+
+[Emacs]: http://www.gnu.org/software/emacs/
+[Vim]: http://www.vim.org/
 [Ruby]: http://www.ruby-lang.org/ "Ruby Programming Language"
+[Rumix]: http://ruby.morphball.net/rumix/
 [UNIX philosophy]: http://en.wikipedia.org/wiki/Unix_philosophy
 [Java Supported Encodings]: http://java.sun.com/j2se/1.5.0/docs/guide/intl/encoding.doc.html

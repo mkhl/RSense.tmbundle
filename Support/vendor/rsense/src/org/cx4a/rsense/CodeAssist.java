@@ -9,11 +9,16 @@ import java.io.InputStreamReader;
 import java.io.LineNumberReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 import org.jruby.ast.Node;
 import org.jruby.ast.NodeType;
@@ -22,18 +27,25 @@ import org.jruby.ast.types.INameNode;
 import org.cx4a.rsense.ruby.Ruby;
 import org.cx4a.rsense.ruby.RubyClass;
 import org.cx4a.rsense.ruby.RubyModule;
+import org.cx4a.rsense.ruby.MetaClass;
 import org.cx4a.rsense.ruby.IRubyObject;
 import org.cx4a.rsense.ruby.Block;
 import org.cx4a.rsense.ruby.DynamicMethod;
 import org.cx4a.rsense.typing.Graph;
 import org.cx4a.rsense.typing.TypeSet;
 import org.cx4a.rsense.typing.vertex.Vertex;
+import org.cx4a.rsense.typing.vertex.CallVertex;
+import org.cx4a.rsense.typing.runtime.VertexHolder;
 import org.cx4a.rsense.typing.runtime.SpecialMethod;
+import org.cx4a.rsense.typing.runtime.Method;
+import org.cx4a.rsense.CodeCompletionResult.CompletionCandidate;
 import org.cx4a.rsense.util.Logger;
 import org.cx4a.rsense.util.NodeDiff;
+import org.cx4a.rsense.util.SourceLocation;
 
 public class CodeAssist {
     public static final String TYPE_INFERENCE_METHOD_NAME = "__rsense_type_inference__";
+    public static final String FIND_DEFINITION_METHOD_NAME_PREFIX = "__rsense_find_definition__";
     public static final String PROJECT_CONFIG_NAME = ".project.rsense";
 
     public static class Location {
@@ -74,7 +86,7 @@ public class CodeAssist {
                 int count = 0;
                 for (int i = 0; i < length; i++) {
                     char c = buf[i];
-                    if (Character.isHighSurrogate(c)) {
+                    if (Character.isHighSurrogate(c) || c == '\r') {
                     } else if (c == '\n') {
                         line++;
                         col = 0;
@@ -126,8 +138,17 @@ public class CodeAssist {
     private static class Context {
         public Project project;
         public TypeSet typeSet;
+        public boolean main;
         public String feature;
-        public int loadPathLevel = 0;
+        public int loadPathLevel;
+
+        public void clear() {
+            this.project = null;
+            this.typeSet = null;
+            this.main = false;
+            this.feature = null;
+            this.loadPathLevel = 0;
+        }
     }
 
     private static class NodeDiffForTypeInference extends NodeDiff {
@@ -137,10 +158,13 @@ public class CodeAssist {
                 return false;
             }
 
-            if (a.getNodeType() == NodeType.CALLNODE
-                && ((INameNode) a).getName().equals(TYPE_INFERENCE_METHOD_NAME)) {
-                // scratch!
-                return false;
+            if (a.getNodeType() == NodeType.CALLNODE) {
+                String name = ((INameNode) a).getName();
+                if (name.equals(TYPE_INFERENCE_METHOD_NAME)
+                    || name.startsWith(FIND_DEFINITION_METHOD_NAME_PREFIX)) {
+                    // scratch!
+                    return false;
+                }
             }
             return true;
         }
@@ -160,11 +184,106 @@ public class CodeAssist {
         }
     }
 
+    private class WhereEventListener implements Project.EventListener {
+        private int line;
+        private int closest;
+        private String name;
+
+        public void prepare(int line) {
+            this.line = line;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void update(Event event) {
+            if (context.main
+                && (event.type == EventType.DEFINE
+                    || event.type == EventType.CLASS
+                    || event.type == EventType.MODULE)
+                && event.name != null
+                && event.node != null) {
+                SourceLocation loc = SourceLocation.of(event.node);
+                if (loc != null
+                    && line >= loc.getLine()
+                    && line - closest > line - loc.getLine()) {
+                    closest = loc.getLine();
+                    name = event.name;
+                }
+            }
+        }
+    }
+
+    private class FindDefinitionEventListener implements Project.EventListener {
+        private int counter = 0;
+        private String prefix;
+        private Set<SourceLocation> locations = new HashSet<SourceLocation>();
+
+        public String setup() {
+            locations.clear();
+
+            // Make unique prefix to distinguish older find-definition command results.
+            return prefix = FIND_DEFINITION_METHOD_NAME_PREFIX + counter++;
+        }
+
+        public Collection<SourceLocation> getLocations() {
+            return locations;
+        }
+
+        public void update(Event event) {
+            CallVertex vertex;
+            if (context.main
+                && event.type == EventType.METHOD_MISSING
+                && (vertex = (CallVertex) event.vertex) != null
+                && vertex.getName().startsWith(prefix)
+                && vertex.getReceiverVertex() != null) {
+                String realName = vertex.getName().substring(prefix.length());
+                for (IRubyObject receiver : vertex.getReceiverVertex().getTypeSet()) {
+                    RubyClass receiverType = receiver.getMetaClass();
+                    if (receiverType != null) {
+                        SourceLocation location = null;
+
+                        // Try to find method
+                        // TODO callSuper
+                        Method method = (Method) receiverType.searchMethod(realName);
+                        if (method != null) {
+                            if (method.getLocation() != null)
+                                locations.add(method.getLocation());
+                        } else {
+                            // Try to find constant
+                            RubyModule klass = null;
+                            if (receiverType instanceof MetaClass) {
+                                MetaClass metaClass = (MetaClass) receiverType;
+                                if (metaClass.getAttached() instanceof RubyModule)
+                                    klass = (RubyModule) metaClass.getAttached();
+                            } else
+                                klass = context.project.getGraph().getRuntime().getContext().getCurrentScope().getModule();
+                            if (klass != null) {
+                                IRubyObject constant = klass.getConstant(realName);
+                                if (constant instanceof VertexHolder)
+                                    location = SourceLocation.of(((VertexHolder) constant).getVertex().getNode());
+                                else if (constant instanceof RubyModule)
+                                    location = ((RubyModule) constant).getLocation();
+                            }
+                        }
+
+                        if (location != null)
+                            locations.add(location);
+                    }
+                }
+                vertex.cutout();
+            }
+        }
+    }
+
     private org.jruby.Ruby rubyRuntime;
     private final Options options;
     private final Context context;
     private Map<String, Project> projects;
     private Project sandbox;
+    private FindDefinitionEventListener definitionFinder;
+    private WhereEventListener whereListener;
 
     private SpecialMethod typeInferenceMethod = new SpecialMethod() {
             public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
@@ -196,7 +315,6 @@ public class CodeAssist {
         };
 
     public CodeAssist(Options options) {
-        rubyRuntime = org.jruby.Ruby.newInstance(); // for parse
         this.context = new Context();
         this.options = options;
         clear();
@@ -313,7 +431,7 @@ public class CodeAssist {
             }
         } catch (IOException e) {
             return LoadResult.failWithException("Cannot open file", e);
-        } 
+        }
     }
 
     public LoadResult load(Project project, File file, Reader reader) {
@@ -321,10 +439,12 @@ public class CodeAssist {
     }
     
     private LoadResult load(Project project, File file, Reader reader, boolean prepare) {
+        boolean oldMain = context.main;
         try {
-            if (prepare) {
+            if (prepare)
                 prepare(project);
-            }
+            else
+                context.main = false;
             Node ast = parseFileContents(file, readAll(reader));
             project.getGraph().load(ast);
 
@@ -333,6 +453,8 @@ public class CodeAssist {
             return result;
         } catch (IOException e) {
             return LoadResult.failWithException("Cannot load file", e);
+        } finally {
+            context.main = oldMain;
         }
     }
 
@@ -416,7 +538,7 @@ public class CodeAssist {
     public TypeInferenceResult typeInference(Project project, File file, Reader reader, Location loc) {
         try {
             prepare(project);
-            Node ast = parseFileContents(file, readAndInjectCode(reader, loc, TYPE_INFERENCE_METHOD_NAME, new String[] {".", "::"}, "."));
+            Node ast = parseFileContents(file, readAndInjectCode(reader, loc, TYPE_INFERENCE_METHOD_NAME, "(?:\\.|::)", "."));
             project.getGraph().load(ast);
 
             TypeInferenceResult result = new TypeInferenceResult();
@@ -448,24 +570,36 @@ public class CodeAssist {
     public CodeCompletionResult codeCompletion(Project project, File file, Reader reader, Location loc) {
         try {
             prepare(project);
-            Node ast = parseFileContents(file, readAndInjectCode(reader, loc, TYPE_INFERENCE_METHOD_NAME, new String[] {".", "::"}, "."));
+            Node ast = parseFileContents(file, readAndInjectCode(reader, loc, TYPE_INFERENCE_METHOD_NAME, "(?:\\.|::)", "."));
             project.getGraph().load(ast);
 
             CodeCompletionResult result = new CodeCompletionResult();
             result.setAST(ast);
 
-            List<CodeCompletionResult.CompletionCandidate> candidates = new ArrayList<CodeCompletionResult.CompletionCandidate>();
+            List<CompletionCandidate> candidates = new ArrayList<CompletionCandidate>();
             for (IRubyObject receiver : context.typeSet) {
                 RubyClass rubyClass = receiver.getMetaClass();
                 for (String name : rubyClass.getMethods(true)) {
                     DynamicMethod method = rubyClass.searchMethod(name);
-                    candidates.add(new CodeCompletionResult.CompletionCandidate(name, method.toString()));
+                    candidates.add(new CompletionCandidate(name,
+                                                           method.toString(),
+                                                           method.getModule().getMethodPath(null),
+                                                           CompletionCandidate.Kind.METHOD));
                 }
                 if (receiver instanceof RubyModule) {
                     RubyModule module = ((RubyModule) receiver);
                     for (String name : module.getConstants(true)) {
-                        String qname = module.getConstantModule(name).toString() + "::" + name;
-                        candidates.add(new CodeCompletionResult.CompletionCandidate(name, qname));
+                        RubyModule directModule = module.getConstantModule(name);
+                        IRubyObject constant = directModule.getConstant(name);
+                        String baseName = directModule.toString();
+                        String qname = baseName + "::" + name;
+                        CompletionCandidate.Kind kind
+                            = (constant instanceof RubyClass)
+                            ? CompletionCandidate.Kind.CLASS
+                            : (constant instanceof RubyModule)
+                            ? CompletionCandidate.Kind.MODULE
+                            : CompletionCandidate.Kind.CONSTANT;
+                        candidates.add(new CompletionCandidate(name, qname, baseName, kind));
                     }
                 }
             }
@@ -477,17 +611,94 @@ public class CodeAssist {
         }
     }
 
+    public WhereResult where(Project project, File file, String encoding, int line) {
+        try {
+            InputStream in = new FileInputStream(file);
+            try {
+                return where(project, file, new InputStreamReader(in, encoding), line);
+            } finally {
+                in.close();
+            }
+        } catch (IOException e) {
+            return WhereResult.failWithException("Cannot open file", e);
+        } 
+    }
+
+    public WhereResult where(Project project, File file, Reader reader, int line) {
+        try {
+            prepare(project);
+            Node ast = parseFileContents(file, readAll(reader));
+
+            whereListener.prepare(line);
+            project.addEventListener(whereListener);
+            try {
+                project.getGraph().load(ast);
+            } finally {
+                project.removeEventListener(whereListener);
+            }
+
+            WhereResult result = new WhereResult();
+            result.setAST(ast);
+            result.setName(whereListener.getName());
+            
+            return result;
+        } catch (IOException e) {
+            return WhereResult.failWithException("Cannot read file", e);
+        }
+    }
+
+    public FindDefinitionResult findDefinition(Project project, File file, String encoding, Location loc) {
+        try {
+            InputStream in = new FileInputStream(file);
+            try {
+                return findDefinition(project, file, new InputStreamReader(in, encoding), loc);
+            } finally {
+                in.close();
+            }
+        } catch (IOException e) {
+            return FindDefinitionResult.failWithException("Cannot open file", e);
+        } 
+    }
+
+    public FindDefinitionResult findDefinition(Project project, File file, Reader reader, Location loc) {
+        try {
+            prepare(project);
+            Node ast = parseFileContents(file, readAndInjectCode(reader, loc, definitionFinder.setup(), "(?:\\.|::|\\s)(\\w+?[!?]?)", null));
+
+            project.addEventListener(definitionFinder);
+            try {
+                project.getGraph().load(ast);
+            } finally {
+                project.removeEventListener(definitionFinder);
+            }
+
+            FindDefinitionResult result = new FindDefinitionResult();
+            result.setAST(ast);
+
+            result.setLocations(definitionFinder.getLocations());
+
+            return result;
+        } catch (IOException e) {
+            return FindDefinitionResult.failWithException("Cannot read file", e);
+        }
+    }
+
     public void clear() {
+        this.rubyRuntime = org.jruby.Ruby.newInstance(); // for parse
+        this.context.clear();
         this.projects = new HashMap<String, Project>();
         this.sandbox = new Project("(sandbox)", new File("."));
         this.sandbox.setLoadPath(options.getLoadPath());
         this.sandbox.setGemPath(options.getGemPath());
+        this.definitionFinder = new FindDefinitionEventListener();
+        this.whereListener = new WhereEventListener();
         openProject(this.sandbox);
     }
 
     private void prepare(Project project) {
         context.project = project;
         context.typeSet = new TypeSet();
+        context.main = true;
 
         Graph graph = project.getGraph();
         graph.addSpecialMethod(TYPE_INFERENCE_METHOD_NAME, typeInferenceMethod);
@@ -502,7 +713,7 @@ public class CodeAssist {
         return readAndInjectCode(reader, null, null, null, null);
     }
 
-    private String readAndInjectCode(Reader _reader, Location loc, String injection, String[] prefixes, String defaultPrefix) throws IOException {
+    private String readAndInjectCode(Reader _reader, Location loc, String injection, String prefixPattern, String defaultPrefix) throws IOException {
         LineNumberReader reader = new LineNumberReader(_reader);
         int line = reader.getLineNumber() + 1;
         int offset = -1;
@@ -522,18 +733,28 @@ public class CodeAssist {
                         len++;
                         if (len == offset) {
                             index = i + 1;
-                            buffer.append(buf, 0, index);
-                            boolean found = false;
-                            for (String p : prefixes) {
-                                if (buffer.substring(Math.max(0, buffer.length() - p.length()), buffer.length()).equals(p)) {
-                                    found = true;
-                                    break;
+
+                            int pstart = Math.max(0, index - 128);
+                            String pbuf = new String(buf, pstart, index - pstart);
+                            Matcher matcher = Pattern.compile(".*" + prefixPattern, Pattern.DOTALL).matcher(pbuf);
+                            boolean match = matcher.matches();
+                            if (match) {
+                                if (matcher.groupCount() > 0) {
+                                    int end = index - (pbuf.length() - matcher.start(1));
+                                    buffer.append(buf, 0, end);
+                                    buffer.append(injection);
+                                    buffer.append(buf, end, index - end);
+                                } else {
+                                    buffer.append(buf, 0, index);
+                                    buffer.append(injection);
                                 }
+                            } else {
+                                buffer.append(buf, 0, index);
+                                if (defaultPrefix != null)
+                                    buffer.append(defaultPrefix);
+                                buffer.append(injection);
                             }
-                            if (!found) {
-                                buffer.append(defaultPrefix);
-                            }
-                            buffer.append(injection);
+
                             index += loc.getSkip();
                             break;
                         }

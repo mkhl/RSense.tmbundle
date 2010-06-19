@@ -9,6 +9,7 @@ import org.cx4a.rsense.typing.annotation.TypeVariable;
 public class PolymorphicObject extends RubyObject {
     // data polymorphic modified?
     private boolean modified = false;
+    private long modifiedTime;
 
     public PolymorphicObject(Ruby runtime) {
         this(runtime, runtime.getObject());
@@ -31,8 +32,13 @@ public class PolymorphicObject extends RubyObject {
         return modified;
     }
 
+    public long getModifiedTime() {
+        return modifiedTime;
+    }
+
     public void setModified(boolean modified) {
         this.modified = modified;
+        this.modifiedTime = System.currentTimeMillis();
     }
 
     public MonomorphicObject[] generateMonomorphicObjects() {
@@ -50,6 +56,33 @@ public class PolymorphicObject extends RubyObject {
 
     public PolymorphicObject clone() {
         return new PolymorphicObject(runtime, metaClass, getTypeVarMap().clone());
+    }
+
+    @Override
+    public int hashCode() {
+        return hashCode(1);
+    }
+
+    @Override
+    public int hashCode(int depth) {
+        if (depth > 2)
+            // Approximate hash code for nested polymorphic object
+            return getMetaClass().hashCode();
+        else
+            return getMetaClass().hashCode() ^ getTypeVarMap().hashCode(depth + 1);
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other)
+            return true;
+
+        if (!(other instanceof PolymorphicObject))
+            return false;
+
+        PolymorphicObject o = (PolymorphicObject) other;
+        return getMetaClass() == o.getMetaClass()
+            && getTypeVarMap().equals(o.getTypeVarMap());
     }
 
     @Override

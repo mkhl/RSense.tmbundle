@@ -4,15 +4,21 @@ import java.util.Collection;
 import java.util.HashSet;
 
 import org.cx4a.rsense.ruby.IRubyObject;
-import org.cx4a.rsense.ruby.RubyObject;
-import org.cx4a.rsense.util.Logger;
 
 public class TypeSet extends HashSet<IRubyObject> {
     private static final long serialVersionUID = 0L;
-    public static final int MEGAMORPHIC_THRESHOLD = 5;
-    public static final TypeSet EMPTY = new TypeSet();
 
-    private boolean megamorphic;
+    public static final TypeSet EMPTY = new TypeSet() {
+            private static final long serialVersionUID = 0L;
+            @Override
+            public boolean add(IRubyObject type) {
+                throw new UnsupportedOperationException();
+            }
+            @Override
+            public boolean addAll(Collection<? extends IRubyObject> types) {
+                throw new UnsupportedOperationException();
+            }
+        };
 
     public TypeSet() {
         super();
@@ -22,31 +28,21 @@ public class TypeSet extends HashSet<IRubyObject> {
         super(other);
     }
 
-    public boolean add(IRubyObject e) {
-        if (megamorphic) return false;
-
-        if (size() >= MEGAMORPHIC_THRESHOLD) {
-            megamorphic = true;
-            // FIXME simple way
-            Logger.warn("megamorphic detected");
-            clear();
-            return super.add(new RubyObject(e.getRuntime(), e.getRuntime().getObject()));
-        } else {
-            return super.add(e);
-        }
+    public TypeSet(int capacity) {
+        super(capacity);
     }
 
-    public boolean addAll(Collection<? extends IRubyObject> c) {
-        boolean changed = false;
-        for (IRubyObject e : c) {
-            if (add(e)) {
-                changed = true;
-            }
-        }
-        return changed;
+    @Override
+    public int hashCode() {
+        return hashCode(1);
     }
 
-    public boolean isMegamorphic() {
-        return megamorphic;
+    public int hashCode(int depth) {
+        int code = 0;
+        for (IRubyObject type : this) {
+            code ^= type.hashCode(depth);
+            code *= 13;
+        }
+        return code;
     }
 }

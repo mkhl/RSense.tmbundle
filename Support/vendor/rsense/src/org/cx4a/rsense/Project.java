@@ -16,6 +16,9 @@ import org.cx4a.rsense.typing.Graph;
 import org.cx4a.rsense.util.Logger;
 
 public class Project {
+    public static interface EventListener extends Graph.EventListener {
+    }
+
     private String name;
     private File path;
     private Ruby runtime;
@@ -27,8 +30,8 @@ public class Project {
     public Project(String name, File path) {
         this.name = name;
         this.path = path;
-        this.runtime = new Ruby();
-        this.graph = new Graph(runtime);
+        this.graph = new Graph();
+        this.runtime = graph.getRuntime();
         this.loadPath = new ArrayList<File>();
         this.gemPath = new ArrayList<File>();
         this.loaded = new HashSet<String>();
@@ -72,6 +75,14 @@ public class Project {
 
     public void setLoaded(String name) {
         loaded.add(name);
+    }
+
+    public void addEventListener(EventListener eventListener) {
+        graph.addEventListener(eventListener);
+    }
+
+    public void removeEventListener(EventListener eventListener) {
+        graph.removeEventListener(eventListener);
     }
 
     private List<File> getAbsoluteLoadPath(List<String> loadPath) {

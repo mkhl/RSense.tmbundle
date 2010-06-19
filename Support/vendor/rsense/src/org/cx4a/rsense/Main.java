@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.Collection;
+import java.util.Arrays;
 import java.util.Properties;
 
 import java.io.File;
@@ -24,13 +25,76 @@ import org.jruby.ast.Node;
 
 import org.cx4a.rsense.ruby.IRubyObject;
 import org.cx4a.rsense.util.Logger;
+import org.cx4a.rsense.util.StringUtil;
 import org.cx4a.rsense.util.HereDocReader;
+import org.cx4a.rsense.util.SourceLocation;
 
 public class Main {
-    private class TestStats {
+    private static class TestStats {
         public int count = 0;
         public int success = 0;
         public int failure = 0;
+        public int error = 0;
+    }
+
+    private static class ProgressMonitor extends Thread implements Project.EventListener {
+        private boolean stop;
+        private PrintStream out;
+        private int interval;
+        private Project.EventListener.Event event;
+
+        public ProgressMonitor(PrintStream out, int interval) {
+            this.out = out;
+            this.interval = interval;
+        }
+
+        public void run() {
+            if (interval > 0) {
+                while (isAlive()) {
+                    print();
+                    try {
+                        Thread.sleep(interval);
+                    } catch (InterruptedException e) {}
+                }
+            }
+        }
+
+        public void attach(Project project) {
+            event = null;
+            if (interval >= 0) {
+                project.addEventListener(this);
+                if (!isAlive())
+                    start();
+            }
+        }
+
+        public void detach(Project project) {
+            event = null;
+            if (interval >= 0)
+                project.removeEventListener(this);
+        }
+
+        public void update(Project.EventListener.Event event) {
+            this.event = event;
+            if (interval == 0)
+                print();
+        }
+
+        private void print() {
+            if (event != null) {
+                switch (event.type) {
+                case DEFINE:
+                    out.printf("progress: defining method %s...\n", event.name);
+                    break;
+                case CLASS:
+                    out.printf("progress: defining class %s...\n", event.name);
+                    break;
+                case MODULE:
+                    out.printf("progress: defining module %s...\n", event.name);
+                    break;
+                }
+            }
+        }
     }
 
     private Properties properties;
@@ -40,6 +104,7 @@ public class Main {
     private Reader inReader;
     private CodeAssist codeAssist;
     private TestStats testStats;
+    private ProgressMonitor progressMonitor;
     
     public static void main(String[] args) throws Exception {
         new Main().run(args);
@@ -82,6 +147,10 @@ public class Main {
 
     private void init(Options options) {
         codeAssist = new CodeAssist(options);
+
+        Integer interval = options.getProgress();
+        progressMonitor = new ProgressMonitor(out, interval != null ? interval * 1000 : -1);
+        progressMonitor.setDaemon(true);
     }
 
     private void start(String command, Options options) {
@@ -101,7 +170,15 @@ public class Main {
                   + "\n"
                   + "  type-inference         - Infer type at specified position.\n"
                   + "      --file=            - File to analyze\n"
-                  + "      --location=        - Location where you want to complete (pos, line:col, str)\n"
+                  + "      --location=        - Location where you want to infer (pos, line:col, str)\n"
+                  + "\n"
+                  + "  find-definition        - Infer type at specified position.\n"
+                  + "      --file=            - File to analyze\n"
+                  + "      --location=        - Location where you want to find (pos, line:col, str)\n"
+                  + "\n"
+                  + "  where                  - Print which class/module/method cursor at.\n"
+                  + "      --file=            - File to analyze\n"
+                  + "      --line=            - Line number to find\n"
                   + "\n"
                   + "  load                   - Load file without any outputs.\n"
                   + "      --file=            - File to analyze\n"
@@ -111,6 +188,8 @@ public class Main {
                   + "      --no-prompt        - Do not show prompt\n"
                   + "\n"
                   + "  clear                  - Clear current environment.\n"
+                  + "\n"
+                  + "  gc                     - Execute garbage collection.\n"
                   + "\n"
                   + "  list-project           - List loaded projects.\n"
                   + "\n"
@@ -133,8 +212,11 @@ public class Main {
                   + "  --debug                - Print debug messages (shorthand of --log-evel=debug)\n"
                   + "  --log=                 - Log file to output (default stderr)\n"
                   + "  --log-level=           - Log level (fixme, error, warn, message, info, debug)\n"
+                  + "  --progress             - Report progress immediately\n"
+                  + "  --progress=            - Report progress per seconds\n\n"
                   + "  --format=              - Output format (plain, emacs)\n"
                   + "  --verbose              - Verbose output\n"
+                  + "  --time                 - Print timing of each command\n"
                   + "  --encoding=            - Input encoding\n"
                   + "  --load-path=           - Load path string (: or ; separated)\n"
                   + "  --gem-path=            - Gem path string (: or ; separated)\n"
@@ -244,7 +326,7 @@ public class Main {
                     continue;
                 }
                 
-                String[] argv = line.split(" ");
+                String[] argv = StringUtil.shellwords(line);
                 if (argv.length > 0) {
                     String command = argv[0];
                     if (command.equals("exit") || command.equals("quit")) {
@@ -267,6 +349,7 @@ public class Main {
     }
     
     private void command(String command, Options options) {
+        long start = System.currentTimeMillis();
         Logger.info("command: %s", command);
         if (options.isTest() && !options.isKeepEnv()) {
             codeAssist.clear();
@@ -275,12 +358,18 @@ public class Main {
             commandCodeCompletion(options);
         } else if (command.equals("type-inference")) {
             commandTypeInference(options);
+        } else if (command.equals("find-definition")) {
+            commandFindDefinition(options);
+        } else if (command.equals("where")) {
+            commandWhere(options);
         } else if (command.equals("load")) {
             commandLoad(options);
         } else if (command.equals("script")) {
             script(options);
         } else if (command.equals("clear")) {
             commandClear(options);
+        } else if (command.equals("gc")) {
+            commandGC(options);
         } else if (command.equals("list-project")) {
             commandListProject(options);
         } else if (command.equals("open-project")) {
@@ -297,12 +386,16 @@ public class Main {
         } else {
             commandUnknown(command, options);
         }
+        if (options.isTime()) {
+            Logger.message("%s: %dms", command, (System.currentTimeMillis() - start));
+        }
     }
 
     private void commandCodeCompletion(Options options) {
+        CodeCompletionResult result;
+        Project project = codeAssist.getProject(options);
         try {
-            CodeCompletionResult result;
-            Project project = codeAssist.getProject(options);
+            progressMonitor.attach(project);
             if (options.isFileStdin()) {
                 result = codeAssist.codeCompletion(project,
                                                    new File("(stdin)"),
@@ -332,10 +425,11 @@ public class Main {
                     out.print("(completion");
                     for (CodeCompletionResult.CompletionCandidate completion : result.getCandidates()) {
                         if (prefix == null || completion.getCompletion().startsWith(prefix)) {
-                            out.print(" (");
-                            out.print("\"" + completion.getCompletion() + "\"");
-                            out.print(" \"" + completion.getQualifiedName() + "\"");
-                            out.print(")");
+                            out.printf(" (\"%s\" \"%s\" \"%s\" \"%s\")",
+                                       completion.getCompletion(),
+                                       completion.getQualifiedName(),
+                                       completion.getBaseName(),
+                                       completion.getKind());
                         }
                     }
                     out.println(")");
@@ -344,25 +438,31 @@ public class Main {
                 } else {
                     for (CodeCompletionResult.CompletionCandidate completion : result.getCandidates()) {
                         if (prefix == null || completion.getCompletion().startsWith(prefix)) {
-                            out.print("completion: ");
-                            out.print(completion.getCompletion());
-                            out.print(" ");
-                            out.print(completion.getQualifiedName());
-                            out.println();
+                            out.printf("completion: %s %s %s %s\n",
+                                       completion.getCompletion(),
+                                       completion.getQualifiedName(),
+                                       completion.getBaseName(),
+                                       completion.getKind());
                         }
                     }
                     codeAssistError(result, options);
                 }
             }
         } catch (Exception e) {
+            if (options.isTest()) {
+                testError(options);
+            }
             commandException(e, options);
+        } finally {
+            progressMonitor.detach(project);
         }
     }
 
     private void commandTypeInference(Options options) {
+        TypeInferenceResult result;
+        Project project = codeAssist.getProject(options);
         try {
-            TypeInferenceResult result;
-            Project project = codeAssist.getProject(options);
+            progressMonitor.attach(project);
             if (options.isFileStdin()) {
                 result = codeAssist.typeInference(project,
                                                   new File("(stdin)"),
@@ -406,14 +506,124 @@ public class Main {
                 }
             }
         } catch (Exception e) {
+            if (options.isTest()) {
+                testError(options);
+            }
             commandException(e, options);
+        } finally {
+            progressMonitor.detach(project);
+        }
+    }
+
+    private void commandFindDefinition(Options options) {
+        FindDefinitionResult result;
+        Project project = codeAssist.getProject(options);
+        try {
+            progressMonitor.attach(project);
+            if (options.isFileStdin()) {
+                result = codeAssist.findDefinition(project,
+                                                   new File("(stdin)"),
+                                                   options.getHereDocReader(inReader),
+                                                   options.getLocation());
+            } else {
+                result = codeAssist.findDefinition(project,
+                                                   options.getFile(),
+                                                   options.getEncoding(),
+                                                   options.getLocation());
+            }
+
+            if (options.isPrintAST()) {
+                Logger.debug("AST:\n%s", result.getAST());
+            }
+            
+            if (options.isTest()) {
+                Set<String> data = new HashSet<String>();
+                for (SourceLocation location : result.getLocations()) {
+                    data.add(location.toString());
+                }
+                test(options, data);
+            } else {
+                if (options.isEmacsFormat()) {
+                    out.print("(");
+                    out.print("(location");
+                    for (SourceLocation location : result.getLocations()) {
+                        if (location.getFile() != null)
+                            out.printf(" (%s . %d)", emacsStringLiteral(location.getFile()), location.getLine());
+                    }
+                    out.println(")");
+                    codeAssistError(result, options);
+                    out.println(")");
+                } else {
+                    for (SourceLocation location : result.getLocations()) {
+                        out.printf("location: %d %s\n", location.getLine(), location.getFile());
+                    }
+                    codeAssistError(result, options);
+                }
+            }
+        } catch (Exception e) {
+            if (options.isTest())
+                testError(options);
+            commandException(e, options);
+        } finally {
+            progressMonitor.detach(project);
+        }
+    }
+
+    private void commandWhere(Options options) {
+        WhereResult result;
+        Project project = codeAssist.getProject(options);
+        try {
+            progressMonitor.attach(project);
+            if (options.isFileStdin()) {
+                result = codeAssist.where(project,
+                                          new File("(stdin)"),
+                                          options.getHereDocReader(inReader),
+                                          options.getLine());
+            } else {
+                result = codeAssist.where(project,
+                                          options.getFile(),
+                                          options.getEncoding(),
+                                          options.getLine());
+            }
+
+            if (options.isPrintAST()) {
+                Logger.debug("AST:\n%s", result.getAST());
+            }
+
+            if (options.isTest()) {
+                Set<String> data = new HashSet<String>();
+                if (result.getName() != null)
+                    data.add(result.getName());
+                test(options, data);
+            } else {
+                if (options.isEmacsFormat()) {
+                    out.print("(");
+                    if (result.getName() != null)
+                        out.printf("(name . \"%s\")", result.getName());
+                    codeAssistError(result, options);
+                    out.println(")");
+                } else {
+                    if (result.getName() != null) {
+                        out.print("name: ");
+                        out.println(result.getName());
+                    }
+                    codeAssistError(result, options);
+                }
+            }
+        } catch (Exception e) {
+            if (options.isTest())
+                testError(options);
+            commandException(e, options);
+        } finally {
+            progressMonitor.detach(project);
         }
     }
 
     private void commandLoad(Options options) {
+        LoadResult result;
+        Project project = codeAssist.getProject(options);
         try {
-            LoadResult result;
-            Project project = codeAssist.getProject(options);
+            progressMonitor.attach(project);
             if (options.isFileStdin()) {
                 result = codeAssist.load(project,
                                          new File("(stdin)"),
@@ -437,11 +647,17 @@ public class Main {
             }
         } catch (Exception e) {
             commandException(e, options);
+        } finally {
+            progressMonitor.detach(project);
         }
     }
 
     private void commandClear(Options options) {
         codeAssist.clear();
+    }
+
+    private void commandGC(Options options) {
+        System.gc();
     }
 
     private void commandListProject(Options options) {
@@ -539,13 +755,15 @@ public class Main {
     private void commandException(Exception e, Options options) {
         if (options.isEmacsFormat()) {
             out.println("((error . \"unexpected error\"))");
+        } else if (e instanceof Options.InvalidOptionException) {
+            out.println(e.getMessage());
         } else {
             out.println("unexpected error:");
             e.printStackTrace(out);
         }
     }
 
-    private void test(Options options, Set<String> data) {
+    private void test(Options options, Collection<String> data) {
         if (options.isShouldBeGiven()) {
             Set<String> shouldBe = options.getShouldBe();
             if (shouldBe.equals(data)) {
@@ -617,9 +835,23 @@ public class Main {
         out.println();
     }
 
+    private void testError(Options options) {
+        if (testStats == null) {
+            testStats = new TestStats();
+        }
+        testStats.count++;
+        testStats.error++;
+        if (options.isTestColor()) {
+            out.printf("\33[34m%s\33[0m... [\33[1;31mERROR\33[0m]", options.getTest());
+        } else {
+            out.printf("%s... [BAD]", options.getTest());
+        }
+        out.println();
+    }
+
     private void testResult(Options options) {
         if (testStats != null) {
-            String ok, bad;
+            String ok, bad, error;
             if (options.isTestColor()) {
                 ok = String.format("\33[32;1m%s\33[0m", testStats.success);
                 if (testStats.failure > 0) {
@@ -627,11 +859,17 @@ public class Main {
                 } else {
                     bad = String.valueOf(testStats.failure);
                 }
+                if (testStats.error > 0) {
+                    error = String.format("\33[31;1m%s\33[0m", testStats.error);
+                } else {
+                    error = String.valueOf(testStats.error);
+                }
             } else {
                 ok = String.valueOf(testStats.success);
                 bad = String.valueOf(testStats.failure);
+                error = String.valueOf(testStats.error);
             }
-            out.printf("test: count=%d, success=%s, failure=%s\n", testStats.count, ok, bad);
+            out.printf("test: count=%d, success=%s, failure=%s, error=%s\n", testStats.count, ok, bad, error);
         }
     }
 
@@ -652,5 +890,9 @@ public class Main {
         if (emacsFormat) {
             out.println(")");
         }
+    }
+
+    private String emacsStringLiteral(String s) {
+        return "\"" + s.replace("\\", "\\\\").replaceAll("\"", "\\\"") + "\"";
     }
 }

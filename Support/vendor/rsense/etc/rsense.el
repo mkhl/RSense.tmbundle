@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2010  Tomohiro Matsuyama
 
-;; Author: Tomohiro Matsuyama <m2ym.pub@gmail.com>
+;; Author: Tomohiro Matsuyama <tomo@cx4a.org>
 ;; Keywords: convenience
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -40,7 +40,7 @@ Nil means proper socket will be selected.")
 (defcustom rsense-log-file nil
   "RSense log file.")
 
-(defcustom rsense-debug t
+(defcustom rsense-debug nil
   "Non-nil means RSense runs on debug mode.")
 
 (defcustom rsense-temp-file nil
@@ -78,23 +78,30 @@ Nil means proper socket will be selected.")
 
 (defun rsense-command-1 (command no-output)
   (apply 'call-process
-               (rsense-interpreter)
-               nil (not no-output) nil
-               (cons (rsense-program)
-                     (apply 'rsense-args
-                            (append command '("--format=emacs"))))))
+         (rsense-interpreter)
+         nil (not no-output) nil
+         (cons (rsense-program)
+               (apply 'rsense-args
+                      (append command '("--format=emacs"))))))
 
-(defun rsense-command (&rest command)
-  (car-safe
-   (read-from-string
-    (with-output-to-string
+(defun rsense-command-to-string (&rest command)
+  (with-output-to-string
       (with-current-buffer standard-output
-        (rsense-command-1 command nil))))))
+        (rsense-command-1 command nil))))
 
 (defun rsense-command-no-output (&rest command)
   (rsense-command-1 command t))
 
-(defun rsense-buffer-command (buffer offset command &optional remove-until)
+(defun rsense-command (&rest command)
+  (let ((output (apply 'rsense-command-to-string command)))
+    (car-safe (read-from-string output))))
+
+(defun* rsense-buffer-command (buffer
+                               command
+                               &key
+                               remove-until
+                               offset
+                               line)
   (unless rsense-temp-file
     (setq rsense-temp-file (make-temp-file temporary-file-directory)))
   (with-temp-buffer
@@ -105,19 +112,33 @@ Nil means proper socket will be selected.")
     (rsense-command command
                     (format "--file=%s" rsense-temp-file)
                     (format "--encoding=UTF-8")
-                    (format "--location=%s" (1- offset))
+                    (cond
+                     (offset
+                      (format "--location=%s" (1- offset)))
+                     (line
+                      (format "--line=%s" line)))
                     (format "--detect-project=%s" (buffer-file-name buffer)))))
 
 (defun rsense-code-completion (&optional buffer offset remove-until)
   (rsense-buffer-command (or buffer (current-buffer))
-                         (or offset (point))
                          "code-completion"
-                         remove-until))
+                         :offset (or offset (point))
+                         :remove-until remove-until))
 
 (defun rsense-type-inference (&optional buffer offset)
   (rsense-buffer-command (or buffer (current-buffer))
-                         (or offset (point))
-                         "type-inference"))
+                         "type-inference"
+                         :offset (or offset (point))))
+
+(defun rsense-find-definition (&optional buffer offset)
+  (rsense-buffer-command (or buffer (current-buffer))
+                         "find-definition"
+                         :offset (or offset (point))))
+
+(defun rsense-where (&optional buffer offset)
+  (rsense-buffer-command (or buffer (current-buffer))
+                         "where"
+                         :line (line-number-at-pos offset)))
 
 (defun rsense-lookup-document (pattern)
   (when (file-directory-p rsense-rurema-home)
@@ -165,6 +186,39 @@ Nil means proper socket will be selected.")
         (popup-tip msg :margin t)
       (message "Type: %s" msg))))
 
+(defun rsense-jump-to-definition ()
+  (interactive)
+  (let ((locations (assoc-default 'location (rsense-find-definition (current-buffer) (point)))))
+    ;; Unmap for tempfile
+    (setq locations (mapcar (lambda (loc)
+                              (cons (if (equal (car loc) rsense-temp-file) (buffer-file-name) (car loc))
+                                    (cdr loc)))
+                            locations))
+    
+    (let (loc)
+      (if (and (> (length locations) 1)
+               (featurep 'popup))
+          (setq loc (popup-menu* (mapcar (lambda (loc)
+                                           (popup-make-item (format "%s:%s" (car loc) (cdr loc))
+                                                            :value loc))
+                                         locations)))
+        ;; TODO selection interface
+        (setq loc (car locations)))
+      (if (null loc)
+          (funcall (if (featurep 'popup) 'popup-tip 'message)
+                   "No definition found"
+                   :margin t)
+        (find-file (car loc))
+        (goto-line (cdr loc))))))
+
+(defun rsense-where-is ()
+  (interactive)
+  (let ((name (or (assoc-default 'name (rsense-where (current-buffer) (point)))
+                  "Unknown")))
+    (if (featurep 'popup)
+        (popup-tip name :margin t)
+      (message "Name: %s" name))))
+
 (defun rsense-open-project (dir)
   (interactive "DDirectory: ")
   (rsense-command-no-output "open-project" (expand-file-name dir)))
@@ -186,37 +240,58 @@ Nil means proper socket will be selected.")
   (interactive)
   (message "%s" (rsense-command "version")))
 
+(defun rsense-service-start ()
+  "Start Windows service."
+  (interactive)
+  (message "%s" (rsense-command-to-string "service" "start")))
+
+(defun rsense-service-stop ()
+  "Stop Windows service."
+  (interactive)
+  (message "%s" (rsense-command-to-string "service" "stop")))
+
+(defun rsense-service-status ()
+  "Show Windows service status."
+  (interactive)
+  (message "%s" (rsense-command-to-string "service" "status")))
+
 (defun ac-rsense-documentation (item)
   (ignore-errors
     (rsense-lookup-document (cadr item))))
 
 (defun ac-rsense-candidates ()
   (mapcar (lambda (entry)
-            (cons (car entry) entry))
+            (let ((name (nth 0 entry))
+                  (qname (nth 1 entry))
+                  (base (nth 2 entry))
+                  (kind (nth 3 entry)))
+              (propertize name
+                          'value entry
+                          'symbol (assoc-default kind '(("CLASS" . "C")
+                                                        ("MODULE" . "M")
+                                                        ("CONSTANT" . "c")
+                                                        ("METHOD" . "m")))
+                          'summary base)))
           (assoc-default 'completion
                          (rsense-code-completion (current-buffer)
                                                  ac-point
                                                  (point)))))
 
-(defvar ac-source-rsense-method
+(defvar ac-source-rsense
   '((candidates . ac-rsense-candidates)
-    (prefix . "\\.\\(.*\\)")
+    (prefix . "\\(?:\\.\\|::\\)\\(.*\\)")
     (requires . 0)
-    (symbol . "f")
     (document . ac-rsense-documentation)
     (cache)))
+(defvaralias 'ac-source-rsense-method 'ac-source-rsense)
 
+;; deprecated
 (defvar ac-source-rsense-constant
-  '((candidates . ac-rsense-candidates)
-    (prefix . "::\\(.*\\)")
-    (requires . 0)
-    (symbol . "c")
-    (document . ac-rsense-documentation)
-    (cache)))
+  '((candidates . nil)))
 
 (defun ac-complete-rsense ()
   (interactive)
-  (auto-complete '(ac-source-rsense-method ac-source-rsense-constant)))
+  (auto-complete '(ac-source-rsense)))
 
 (provide 'rsense)
 ;;; rsense.el ends here

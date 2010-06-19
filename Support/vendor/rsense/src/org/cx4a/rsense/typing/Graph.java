@@ -137,12 +137,13 @@ import org.cx4a.rsense.ruby.DynamicMethod;
 import org.cx4a.rsense.util.Logger;
 import org.cx4a.rsense.util.NodeDiff;
 import org.cx4a.rsense.util.SourceLocation;
-import org.cx4a.rsense.typing.runtime.InstanceFactory;
+import org.cx4a.rsense.typing.runtime.ObjectAllocator;
 import org.cx4a.rsense.typing.runtime.VertexHolder;
 import org.cx4a.rsense.typing.runtime.Array;
 import org.cx4a.rsense.typing.runtime.Hash;
 import org.cx4a.rsense.typing.runtime.Method;
 import org.cx4a.rsense.typing.runtime.DefaultMethod;
+import org.cx4a.rsense.typing.runtime.AliasMethod;
 import org.cx4a.rsense.typing.runtime.SpecialMethod;
 import org.cx4a.rsense.typing.runtime.Proc;
 import org.cx4a.rsense.typing.runtime.RuntimeHelper;
@@ -165,7 +166,34 @@ import org.cx4a.rsense.typing.annotation.ClassType;
 import org.cx4a.rsense.typing.annotation.MethodType;
 
 public class Graph implements NodeVisitor {
-    public static final Vertex NULL_VERTEX = new Vertex();
+    public interface EventListener {
+        public enum EventType { DEFINE, CLASS, MODULE, METHOD_MISSING }
+        
+        public static class Event {
+            public final EventType type;
+
+            // TODO divide into classes
+            public final String name;
+            public final Node node;
+            public final Vertex vertex;
+            
+            public Event(EventType type, String name, Node node) {
+                this.type = type;
+                this.name = name;
+                this.node = node;
+                this.vertex = null;
+            }
+
+            public Event(EventType type, Vertex vertex) {
+                this.type = type;
+                this.name = null;
+                this.node = null;
+                this.vertex = vertex;
+            }
+        }
+        
+        public void update(Event event);
+    }
 
     protected static class DummyCall {
         private MethodDefNode node;
@@ -182,9 +210,9 @@ public class Graph implements NodeVisitor {
 
         public void force(Graph graph) {
             if (!newMethod.isTemplatesShared()) {
-                Map<TemplateAttribute, Template> templates = oldMethod != null ? oldMethod.getTemplates() : null;
-                if (templates != null && !templates.isEmpty()) {
-                    RuntimeHelper.dummyCallForTemplates(graph, node, newMethod, templates);
+                Collection<TemplateAttribute> templateAttributes = oldMethod != null ? oldMethod.getTemplates().keySet() : null;
+                if (templateAttributes != null && !templateAttributes.isEmpty()) {
+                    RuntimeHelper.dummyCallForTemplates(graph, node, newMethod, templateAttributes);
                 } else {
                     RuntimeHelper.dummyCall(graph, node, newMethod, receiver);
                 }
@@ -194,16 +222,17 @@ public class Graph implements NodeVisitor {
 
     protected Ruby runtime;
     protected Context context;
-    protected InstanceFactory instanceFactory;
     protected Map<String, SpecialMethod> specialMethods;
     protected NodeDiff nodeDiff;
     protected Queue<DummyCall> dummyCallQueue = new LinkedList<DummyCall>();
-    
-    public Graph(Ruby runtime) {
-        this.runtime = runtime;
+    protected List<EventListener> eventListeners;
+
+    public Graph() {
+        this.runtime = new Ruby();
+        this.runtime.setObjectAllocator(new ObjectAllocator());
         this.context = runtime.getContext();
-        this.instanceFactory = new InstanceFactory(runtime);
         this.specialMethods = new HashMap<String, SpecialMethod>();
+        this.eventListeners = new ArrayList<EventListener>();
         init();
     }
 
@@ -231,6 +260,41 @@ public class Graph implements NodeVisitor {
         this.nodeDiff = nodeDiff;
     }
 
+    public void addEventListener(EventListener eventListener) {
+        eventListeners.add(eventListener);
+    }
+
+    public void removeEventListener(EventListener eventListener) {
+        eventListeners.remove(eventListener);
+    }
+
+    public void notifyDefineEvent(Node node, Method method) {
+        for (EventListener eventListener : eventListeners)
+            eventListener.update(new EventListener.Event(EventListener.EventType.DEFINE,
+                                                         method.toString(),
+                                                         node));
+    }
+
+    public void notifyClassEvent(Node node, RubyModule klass) {
+        for (EventListener eventListener : eventListeners)
+            eventListener.update(new EventListener.Event(EventListener.EventType.CLASS,
+                                                         klass.toString(),
+                                                         node));
+    }
+
+    public void notifyModuleEvent(Node node, RubyModule module) {
+        for (EventListener eventListener : eventListeners)
+            eventListener.update(new EventListener.Event(EventListener.EventType.MODULE,
+                                                         module.toString(),
+                                                         node));
+    }
+
+    public void notifyMethodMissingEvent(CallVertex vertex) {
+        for (EventListener eventListener : eventListeners)
+            eventListener.update(new EventListener.Event(EventListener.EventType.METHOD_MISSING,
+                                                         vertex));
+    }
+
     private void init() {
         addSpecialMethod("new", new SpecialMethod() {
                 public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
@@ -240,8 +304,16 @@ public class Graph implements NodeVisitor {
                         TypeSet newReceivers = new TypeSet();
                         for (IRubyObject receiver : receivers) {
                             if (receiver instanceof RubyClass) {
-                                if (((RubyClass) receiver).getMetaClass().searchMethod("new") == null) {
-                                    resultTypeSet.add(newInstanceOf((RubyClass) receiver));
+                                RubyClass klass = (RubyClass) receiver;
+                                if (klass.getMetaClass().searchMethod("new") == null) {
+                                    if (klass == runtime.getProc()) {
+                                        // Proc.new {}
+                                        if (block instanceof Proc)
+                                            resultTypeSet.add((Proc) block);
+                                        else
+                                            Logger.debug("Proc.new for no block is not supported yet");
+                                    } else
+                                        resultTypeSet.add(newInstanceOf((RubyClass) receiver));
                                 } else {
                                     newReceivers.add(receiver);
                                 }
@@ -264,7 +336,7 @@ public class Graph implements NodeVisitor {
                         .setNextMethodChange(true)
                         .setNextMethodName("initialize")
                         .setNextMethodReceivers(accumulator)
-                        .setNextMethodBlock(null)
+                        .setNextMethodBlock(block)
                         .setNextMethodNoReturn(true)
                         .setPrivateVisibility(true);
                 }
@@ -350,31 +422,31 @@ public class Graph implements NodeVisitor {
             });
 
         addSpecialMethod("private", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.setMethodsVisibility(Graph.this, receivers, args, Visibility.PRIVATE);
                 }
             });
 
         addSpecialMethod("protected", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.setMethodsVisibility(Graph.this, receivers, args, Visibility.PROTECTED);
                 }
             });
 
         addSpecialMethod("public", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.setMethodsVisibility(Graph.this, receivers, args, Visibility.PUBLIC);
                 }
             });
 
         addSpecialMethod("module_function", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.setMethodsVisibility(Graph.this, receivers, args, Visibility.MODULE_FUNCTION);
                 }
             });
 
         addSpecialMethod("attr", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     if (args != null && args.length > 0) {
                         RuntimeHelper.defineAttrs(Graph.this, receivers, new Vertex[] { args[0] }, true, args.length > 1);
                     }
@@ -382,25 +454,25 @@ public class Graph implements NodeVisitor {
             });
 
         addSpecialMethod("attr_reader", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.defineAttrs(Graph.this, receivers, args, true, false);
                 }
             });
 
         addSpecialMethod("attr_writer", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.defineAttrs(Graph.this, receivers, args, false, true);
                 }
             });
 
         addSpecialMethod("attr_accessor", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     RuntimeHelper.defineAttrs(Graph.this, receivers, args, true, true);
                 }
             });
 
         addSpecialMethod("alias_method", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     boolean callNextMethod = true;
                     if (args != null && args.length == 2) {
                         for (IRubyObject receiver : receivers) {
@@ -411,9 +483,8 @@ public class Graph implements NodeVisitor {
                                 if (newName != null && oldName != null) {
                                     RubyModule module = (RubyModule) receiver;
                                     DynamicMethod method = module.getMethod(oldName);
-                                    if (method != null) {
-                                        module.addMethod(newName, method);
-                                    }
+                                    if (method instanceof Method)
+                                        module.addMethod(newName, new AliasMethod(newName, (Method) method));
                                 }
                             }
                         }
@@ -423,7 +494,7 @@ public class Graph implements NodeVisitor {
             });
         
         addSpecialMethod("unpack", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     if (args != null && args.length > 0) {
                         String template = Vertex.getString(args[0]);
                         if (template != null) {
@@ -469,27 +540,68 @@ public class Graph implements NodeVisitor {
                 }
             });
 
-        addSpecialMethod("call", new SpecialMethod() {
-                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block blcck, Result result) {
+        addSpecialMethod("proc", new SpecialMethod() {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
                     TypeSet ts = new TypeSet();
-                    TypeSet arg = null;
+                    for (IRubyObject receiver : receivers) {
+                        DynamicMethod method = receiver.getMetaClass().searchMethod("proc");
+                        if (method != null && method.getModule() == runtime.getKernel()) {
+                            if (block instanceof Proc)
+                                ts.add((Proc) block);
+                            else
+                                Logger.debug("proc for no block is not supported yet");
+                        }
+                    }
+                    if (ts.isEmpty())
+                        result.setCallNextMethod(true);
+                    else
+                        result.setResultTypeSet(ts);
+                }
+            });
+
+        addSpecialMethod("lambda", new SpecialMethod() {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
+                    TypeSet ts = new TypeSet();
+                    for (IRubyObject receiver : receivers) {
+                        DynamicMethod method = receiver.getMetaClass().searchMethod("lambda");
+                        if (method != null && method.getModule() == runtime.getKernel()) {
+                            if (block instanceof Proc)
+                                ts.add((Proc) block);
+                            else
+                                Logger.debug("lambda for no block is not supported yet");
+                        }
+                    }
+                    if (ts.isEmpty())
+                        result.setCallNextMethod(true);
+                    else
+                        result.setResultTypeSet(ts);
+                }
+            });
+
+        addSpecialMethod("call", new SpecialMethod() {
+                public void call(Ruby runtime, TypeSet receivers, Vertex[] args, Block block, Result result) {
+                    TypeSet ts = new TypeSet();
+                    Vertex argVertex = null;
                     for (IRubyObject receiver : receivers) {
                         if (receiver instanceof Proc) {
-                            if (arg == null) {
+                            if (argVertex == null) {
+                                TypeSet argts;
                                 if (args == null) {
-                                    arg = new TypeSet();
-                                    arg.add(RuntimeHelper.createArray(Graph.this, new Vertex[0]));
+                                    argts = new TypeSet();
+                                    argts.add(RuntimeHelper.createArray(Graph.this, new Vertex[0]));
                                 } else if (args.length == 1) {
-                                    arg = args[0].getTypeSet();
+                                    argts = args[0].getTypeSet();
                                 } else {
-                                    arg = new TypeSet();
-                                    arg.add(RuntimeHelper.createArray(Graph.this, args));
+                                    argts = new TypeSet();
+                                    argts.add(RuntimeHelper.createArray(Graph.this, args));
                                 }
+                                argVertex = createFreeVertex(argts);
+                                argVertex.markUnchanged();
                             }
                             YieldVertex vertex = new YieldVertex(null,
                                                                  RuntimeHelper.getFrameTemplate(runtime.getContext().getCurrentFrame()),
                                                                  (Proc) receiver,
-                                                                 createFreeVertex(arg),
+                                                                 argVertex,
                                                                  true);
                             RuntimeHelper.yield(Graph.this, vertex);
                             ts.addAll(vertex.getTypeSet());
@@ -507,13 +619,13 @@ public class Graph implements NodeVisitor {
         RubyClass classClass = runtime.getClassClass();
         RubyClass procClass = runtime.getProc();
         
-        objectClass.addMethod("class", new Method(objectClass, "class", Visibility.PUBLIC, null) {
+        objectClass.addMethod("class", new DefaultMethod(objectClass, "class", null, null, Visibility.PUBLIC, null) {
                 public Vertex call(Graph graph, Template template, IRubyObject receiver, IRubyObject[] args, Vertex[] argVertices, Block block) {
                     return graph.createFreeSingleTypeVertex(receiver.getMetaClass());
                 }
             });
 
-        classClass.addMethod("superclass", new Method(classClass, "superclass", Visibility.PUBLIC, null) {
+        classClass.addMethod("superclass", new DefaultMethod(classClass, "superclass", null, null, Visibility.PUBLIC, null) {
                 public Vertex call(Graph graph, Template template, IRubyObject receiver, IRubyObject[] args, Vertex[] argVertices, Block block) {
                     if (receiver instanceof RubyClass) {
                         return graph.createFreeSingleTypeVertex(((RubyClass) receiver).getSuperClass());
@@ -584,7 +696,7 @@ public class Graph implements NodeVisitor {
     }
     
     public Vertex createSingleTypeVertex(Node node, IRubyObject type) {
-        Vertex vertex = new Vertex(node);
+        Vertex vertex = new Vertex(node, 2);
         vertex.addType(type);
         return vertex;
     }
@@ -594,9 +706,9 @@ public class Graph implements NodeVisitor {
         propagate(src, dest);
     }
 
-    public void addEdgeAndCopyTypeSet(Vertex src, Vertex dest) {
+    public void addEdgeAndUpdate(Vertex src, Vertex dest) {
         src.addEdge(dest);
-        dest.copyTypeSet(src);
+        dest.update(src);
     }
 
     private Propagation propagation;
@@ -616,10 +728,11 @@ public class Graph implements NodeVisitor {
     }
 
     public boolean propagateEdges(Propagation propagation, Vertex src) {
+        // Edges may change during propagation
         int size = src.getEdges().size();
         for (int i = 0; i < size; i++) {
             Vertex edge = src.getEdges().get(i);
-            if (!edge.accept(propagation, src)) {
+            if (!propagation.visit(edge, src)) {
                 return false;
             }
         }
@@ -652,29 +765,28 @@ public class Graph implements NodeVisitor {
     }
 
     public IRubyObject newInstanceOf(RubyClass klass) {
-        return instanceFactory.newInstance(klass);
+        return runtime.newInstance(klass);
     }
 
     public Object visitAliasNode(AliasNode node) {
         RubyModule module = context.getFrameModule();
         DynamicMethod method = module.getMethod(node.getOldName());
-        if (method != null) {
-            module.addMethod(node.getNewName(), method);
-        }
-        return NULL_VERTEX;
+        if (method instanceof Method)
+            module.addMethod(node.getNewName(), new AliasMethod(node.getNewName(), (Method) method));
+        return Vertex.EMPTY;
     }
     
     public Object visitAndNode(AndNode node) {
         Vertex vertex = createEmptyVertex(node);
         Vertex firstVertex = createVertex(node.getFirstNode());
         Vertex secondVertex = createVertex(node.getSecondNode());
-        addEdgeAndCopyTypeSet(secondVertex, vertex);
+        addEdgeAndUpdate(secondVertex, vertex);
         return vertex;
     }
     
     public Object visitArgsNode(ArgsNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitArgsCatNode(ArgsCatNode node) {
@@ -709,7 +821,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitArgsPushNode(ArgsPushNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitArrayNode(ArrayNode node) {
@@ -745,7 +857,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitBlockArgNode(BlockArgNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitBlockNode(BlockNode node) {
@@ -759,7 +871,7 @@ public class Graph implements NodeVisitor {
     public Object visitBlockPassNode(BlockPassNode node) {
         // Never reach here
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitBreakNode(BreakNode node) {
@@ -767,10 +879,13 @@ public class Graph implements NodeVisitor {
         LoopTag loopTag = RuntimeHelper.getFrameLoopTag(frame);
         if (loopTag != null) {
             Vertex vertex = createVertex(node.getValueNode());
-            addEdgeAndPropagate(vertex, loopTag.getReturnVertex());
+            if (loopTag.getYieldVertex() != null)
+                addEdgeAndPropagate(vertex, loopTag.getYieldVertex());
+            else
+                Logger.debug("no yield vertex");
             return vertex;
         }
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitConstDeclNode(ConstDeclNode node) {
@@ -809,13 +924,13 @@ public class Graph implements NodeVisitor {
                 WhenNode when = (WhenNode) cases.get(i);
                 if (when.getBodyNode() != null) {
                     Vertex v = createVertex(when.getBodyNode());
-                    addEdgeAndCopyTypeSet(v, vertex);
+                    addEdgeAndUpdate(v, vertex);
                 }
             }
         }
         if (node.getElseNode() != null) {
             Vertex v = createVertex(node.getElseNode());
-            addEdgeAndCopyTypeSet(v, vertex);
+            addEdgeAndUpdate(v, vertex);
         }
         return vertex;
     }
@@ -824,6 +939,11 @@ public class Graph implements NodeVisitor {
         Colon3Node cpath = node.getCPath();
         String name = cpath.getName();
         RubyModule module = RuntimeHelper.getNamespace(this, cpath);
+        if (module == null) {
+            Logger.error(SourceLocation.of(node), "namespace unresolved: %s", cpath);
+            return Vertex.EMPTY;
+        }
+
         RubyClass superClass = null;
         if (node.getSuperNode() != null) {
             Vertex v = createVertex(node.getSuperNode());
@@ -838,19 +958,23 @@ public class Graph implements NodeVisitor {
             }
         }
 
-        RubyClass klass = module.defineOrGetClassUnder(name, superClass);
+        RubyModule klass = module.defineOrGetClassUnder(name, superClass, SourceLocation.of(node));
 
-        context.pushFrame(klass, name, klass, null, Visibility.PUBLIC);
-        context.pushScope(new LocalScope(klass));
+        if (klass != null) {
+            context.pushFrame(klass, name, klass, null, Visibility.PUBLIC);
+            context.pushScope(new LocalScope(klass));
 
-        RuntimeHelper.classPartialUpdate(this, klass, node.getBodyNode());
+            RuntimeHelper.classPartialUpdate(this, klass, node.getBodyNode());
 
-        context.popScope();
-        context.popFrame();
+            context.popScope();
+            context.popFrame();
 
-        RuntimeHelper.setClassTag(klass, node.getBodyNode(), AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
+            RuntimeHelper.setClassTag(klass, node.getBodyNode(), AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
+
+            notifyClassEvent(node, klass);
+        }
         
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitColon2Node(Colon2Node node) {
@@ -862,10 +986,10 @@ public class Graph implements NodeVisitor {
             } else if (value != null) {
                 return createSingleTypeVertex(node, value);
             } else {
-                return NULL_VERTEX;
+                return Vertex.EMPTY;
             }
         } else {
-            return NULL_VERTEX;
+            return Vertex.EMPTY;
         }
     }
     
@@ -876,7 +1000,7 @@ public class Graph implements NodeVisitor {
         } else if (value != null) {
             return createSingleTypeVertex(node, value);
         } else {
-            return NULL_VERTEX;
+            return Vertex.EMPTY;
         }
     }
     
@@ -887,7 +1011,7 @@ public class Graph implements NodeVisitor {
         } else if (value != null) {
             return createSingleTypeVertex(node, value);
         } else {
-            return NULL_VERTEX;
+            return Vertex.EMPTY;
         }
     }
     
@@ -912,7 +1036,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitDVarNode(DVarNode node) {
         VertexHolder holder = (VertexHolder) runtime.getContext().getCurrentScope().getValue(node.getName());
-        return holder != null ? holder.getVertex() : NULL_VERTEX;
+        return holder != null ? holder.getVertex() : Vertex.EMPTY;
     }
     
     public Object visitDXStrNode(DXStrNode node) {
@@ -937,11 +1061,11 @@ public class Graph implements NodeVisitor {
         }
 
         Method oldMethod = (Method) klass.getMethod(name);
-        Method newMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, visibility, node.getPosition());
+        Method newMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, visibility, SourceLocation.of(node));
         klass.addMethod(name, newMethod);
         
         if (moduleFunction) {
-            Method singletonMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, visibility, node.getPosition());
+            Method singletonMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, visibility, SourceLocation.of(node));
             singletonMethod.setVisibility(Visibility.PUBLIC);
             klass.getSingletonClass().addMethod(name, singletonMethod);
         }
@@ -953,34 +1077,41 @@ public class Graph implements NodeVisitor {
 
         dummyCallQueue.offer(new DummyCall(node, newMethod, oldMethod, receiver));
 
-        return NULL_VERTEX;
+        notifyDefineEvent(node, newMethod);
+
+        return Vertex.EMPTY;
     }
     
     public Object visitDefsNode(DefsNode node) {
         Vertex receiverVertex = createVertex(node.getReceiverNode());
         if (receiverVertex.isEmpty()) {
-            Logger.error("Null receiver for defs");
-            return NULL_VERTEX;
+            Logger.error(SourceLocation.of(node), "null receiver for defs: %s", node.getName());
+            return Vertex.EMPTY;
         }
 
         RubyModule cbase = context.getCurrentScope().getModule();
         String name = node.getName();
         for (IRubyObject receiver : receiverVertex.getTypeSet()) {
-            RubyClass rubyClass = receiver.getSingletonClass();
-            Node bodyNode = node.getBodyNode();
-            Node argsNode = node.getArgsNode();
+            if (receiver instanceof RubyModule) {
+                RubyClass rubyClass = receiver.getSingletonClass();
+                Node bodyNode = node.getBodyNode();
+                Node argsNode = node.getArgsNode();
 
-            Method oldMethod = (Method) rubyClass.getMethod(name);
-            Method newMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, Visibility.PUBLIC, node.getPosition());
-            rubyClass.addMethod(name, newMethod);
+                Method oldMethod = (Method) rubyClass.getMethod(name);
+                Method newMethod = new DefaultMethod(cbase, name, bodyNode, argsNode, Visibility.PUBLIC, SourceLocation.of(node));
+                rubyClass.addMethod(name, newMethod);
 
-            RuntimeHelper.methodPartialUpdate(this, node, newMethod, oldMethod, receiver);
-            RuntimeHelper.setMethodTag(newMethod, node, AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
+                RuntimeHelper.methodPartialUpdate(this, node, newMethod, oldMethod, receiver);
+                RuntimeHelper.setMethodTag(newMethod, node, AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
 
-            dummyCallQueue.offer(new DummyCall(node, newMethod, oldMethod, receiver));
+                dummyCallQueue.offer(new DummyCall(node, newMethod, oldMethod, receiver));
+
+                notifyDefineEvent(node, newMethod);
+            } else
+                Logger.warn(SourceLocation.of(node), "cannot define singleton method for individual object: %s", name);
         }
 
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitDotNode(DotNode node) {
@@ -991,8 +1122,8 @@ public class Graph implements NodeVisitor {
         TypeVarMap typeVarMap = RuntimeHelper.getTypeVarMap(range);
         if (typeVarMap != null && beginVertex != null && endVertex != null) {
             Vertex t = createFreeVertex();
-            t.copyTypeSet(beginVertex);
-            t.copyTypeSet(endVertex);
+            t.update(beginVertex);
+            t.update(endVertex);
             typeVarMap.put(TypeVariable.valueOf("t"), t);
         }
         return createSingleTypeVertex(node, range);
@@ -1000,7 +1131,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitEncodingNode(EncodingNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitEnsureNode(EnsureNode node) {
@@ -1014,7 +1145,7 @@ public class Graph implements NodeVisitor {
     public Object visitEvStrNode(EvStrNode node) {
         // never reach here
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitFCallNode(FCallNode node) {
@@ -1048,7 +1179,7 @@ public class Graph implements NodeVisitor {
         Block block = new Proc(runtime, node.getVarNode(), node.getBodyNode(), context.getCurrentFrame(), context.getCurrentScope());
         CallVertex callVertex = new CallVertex(node, "each", receiverVertex, null, block);
         RuntimeHelper.call(this, callVertex);
-        addEdgeAndCopyTypeSet(vertex, callVertex);
+        addEdgeAndUpdate(vertex, callVertex);
         return vertex;
     }
     
@@ -1078,12 +1209,12 @@ public class Graph implements NodeVisitor {
         Vertex thenBodyVertex = null;
         if (node.getThenBody() != null) {
             thenBodyVertex = createVertex(node.getThenBody());
-            addEdgeAndCopyTypeSet(thenBodyVertex, vertex);
+            addEdgeAndUpdate(thenBodyVertex, vertex);
         }
         Vertex elseBodyVertex = null;
         if (node.getElseBody() != null) {
             elseBodyVertex = createVertex(node.getElseBody());
-            addEdgeAndCopyTypeSet(elseBodyVertex, vertex);
+            addEdgeAndUpdate(elseBodyVertex, vertex);
 
         }
         return vertex;
@@ -1091,7 +1222,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitIterNode(IterNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitLocalAsgnNode(LocalAsgnNode node) {
@@ -1100,7 +1231,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitLocalVarNode(LocalVarNode node) {
         VertexHolder holder = (VertexHolder) runtime.getContext().getCurrentScope().getValue(node.getName());
-        return holder != null ? holder.getVertex() : NULL_VERTEX;
+        return holder != null ? holder.getVertex() : Vertex.EMPTY;
     }
     
     public Object visitMultipleAsgnNode(MultipleAsgnNode node) {
@@ -1109,7 +1240,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitMultipleAsgnNode(MultipleAsgn19Node node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitMatch2Node(Match2Node node) {
@@ -1131,19 +1262,28 @@ public class Graph implements NodeVisitor {
         Colon3Node cpath = node.getCPath();
         String name = cpath.getName();
         RubyModule enclosingModule = RuntimeHelper.getNamespace(this, cpath);
-        RubyModule module = enclosingModule.defineOrGetModuleUnder(name);
+        if (enclosingModule == null) {
+            Logger.error(SourceLocation.of(node), "namespace unresolved: %s", name);
+            return Vertex.EMPTY;
+        }
 
-        context.pushFrame(module, name, module, null, Visibility.PUBLIC);
-        context.pushScope(new LocalScope(module));
+        RubyModule module = enclosingModule.defineOrGetModuleUnder(name, SourceLocation.of(node));
 
-        RuntimeHelper.classPartialUpdate(this, module, node.getBodyNode());
+        if (module != null) {
+            context.pushFrame(module, name, module, null, Visibility.PUBLIC);
+            context.pushScope(new LocalScope(module));
 
-        context.popScope();
-        context.popFrame();
+            RuntimeHelper.classPartialUpdate(this, module, node.getBodyNode());
+
+            context.popScope();
+            context.popFrame();
         
-        RuntimeHelper.setClassTag(module, node.getBodyNode(), AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
-
-        return NULL_VERTEX;
+            RuntimeHelper.setClassTag(module, node.getBodyNode(), AnnotationHelper.parseAnnotations(node.getCommentList(), node.getPosition().getStartLine()));
+        
+            notifyModuleEvent(node, module);
+        }
+        
+        return Vertex.EMPTY;
     }
     
     public Object visitNewlineNode(NewlineNode node) {
@@ -1155,10 +1295,13 @@ public class Graph implements NodeVisitor {
         LoopTag loopTag = RuntimeHelper.getFrameLoopTag(frame);
         if (loopTag != null && loopTag.getYieldVertex() != null) {
             Vertex vertex = createVertex(node.getValueNode());
-            addEdgeAndPropagate(vertex, loopTag.getYieldVertex());
+            if (loopTag.getYieldVertex() != null)
+                addEdgeAndPropagate(vertex, loopTag.getYieldVertex());
+            else
+                Logger.debug("no yield vertex");
             return vertex;
         }
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitNilNode(NilNode node) {
@@ -1202,8 +1345,7 @@ public class Graph implements NodeVisitor {
         System.arraycopy(argVertices, 0, expandedArgs, 0, argVertices.length);
         expandedArgs[expandedArgs.length - 1] = value;
         CallVertex setter = new CallVertex(node, "[]=", receiverVertex, expandedArgs, null);
-        RuntimeHelper.call(this, setter);
-        return src;
+        return RuntimeHelper.call(this, setter);
     }
     
     public Object visitOpAsgnNode(OpAsgnNode node) {
@@ -1223,16 +1365,15 @@ public class Graph implements NodeVisitor {
         }
         
         CallVertex setter = new CallVertex(node.getValueNode(), varAsgn, receiverVertex, new Vertex[] {value}, null);
-        RuntimeHelper.call(this, setter);
-        return src;
+        return RuntimeHelper.call(this, setter);
     }
     
     public Object visitOpAsgnAndNode(OpAsgnAndNode node) {
         Vertex vertex = createEmptyVertex(node);
         Vertex firstVertex = createVertex(node.getFirstNode());
         Vertex secondVertex = createVertex(node.getSecondNode());
-        addEdgeAndCopyTypeSet(firstVertex, vertex);
-        addEdgeAndCopyTypeSet(secondVertex, vertex);
+        addEdgeAndUpdate(firstVertex, vertex);
+        addEdgeAndUpdate(secondVertex, vertex);
         return vertex;
     }
     
@@ -1240,8 +1381,8 @@ public class Graph implements NodeVisitor {
         Vertex vertex = createEmptyVertex(node);
         Vertex firstVertex = createVertex(node.getFirstNode());
         Vertex secondVertex = createVertex(node.getSecondNode());
-        addEdgeAndCopyTypeSet(firstVertex, vertex);
-        addEdgeAndCopyTypeSet(secondVertex, vertex);
+        addEdgeAndUpdate(firstVertex, vertex);
+        addEdgeAndUpdate(secondVertex, vertex);
         return vertex;
     }
     
@@ -1249,23 +1390,23 @@ public class Graph implements NodeVisitor {
         Vertex vertex = createEmptyVertex(node);
         Vertex firstVertex = createVertex(node.getFirstNode());
         Vertex secondVertex = createVertex(node.getSecondNode());
-        addEdgeAndCopyTypeSet(firstVertex, vertex);
-        addEdgeAndCopyTypeSet(secondVertex, vertex);
+        addEdgeAndUpdate(firstVertex, vertex);
+        addEdgeAndUpdate(secondVertex, vertex);
         return vertex;
     }
     
     public Object visitPreExeNode(PreExeNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitPostExeNode(PostExeNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitRedoNode(RedoNode node) {
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitRegexpNode(RegexpNode node) {
@@ -1276,11 +1417,11 @@ public class Graph implements NodeVisitor {
         if (node.getBodyNode() != null) {
             return createVertex(node.getBodyNode());
         }
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitRescueNode(RescueNode node) {
-        Vertex result = NULL_VERTEX;
+        Vertex result = Vertex.EMPTY;
         if (node.getBodyNode() != null) {
             result = createVertex(node.getBodyNode());
         }
@@ -1295,11 +1436,11 @@ public class Graph implements NodeVisitor {
     
     public Object visitRestArgNode(RestArgNode node) {
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitRetryNode(RetryNode node) {
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitReturnNode(ReturnNode node) {
@@ -1310,7 +1451,7 @@ public class Graph implements NodeVisitor {
             addEdgeAndPropagate(vertex, template.getReturnVertex());
             return vertex;
         }
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitRootNode(RootNode node) {
@@ -1324,28 +1465,36 @@ public class Graph implements NodeVisitor {
             for (IRubyObject object : receiverVertex.getTypeSet()) {
                 RubyClass klass = object.getMetaClass();
                 if (klass.isSingleton()) {
-                    context.pushFrame(klass, "sclass", klass, null, Visibility.PUBLIC);
-                    context.pushScope(new LocalScope((RubyModule) ((MetaClass) klass).getAttached()));
+                    MetaClass metaClass = (MetaClass) klass;
+                    if (metaClass.getAttached() instanceof RubyModule) {
+                        context.pushFrame(klass, "sclass", klass, null, Visibility.PUBLIC);
+                        context.pushScope(new LocalScope((RubyModule) metaClass.getAttached()));
 
-                    if (node.getBodyNode() != null) {
-                        createVertex(node.getBodyNode());
+                        if (node.getBodyNode() != null) {
+                            createVertex(node.getBodyNode());
+                        }
+
+                        context.popScope();
+                        context.popFrame();
                     }
-
-                    context.popScope();
-                    context.popFrame();
-        
-                    return NULL_VERTEX;
+                    
+                    return Vertex.EMPTY;
                 } else {
                     Logger.warn(SourceLocation.of(node), "singleton class of objects is not supported.");
                 }
             }
         }
 
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitSelfNode(SelfNode node) {
-        return createSingleTypeVertex(node, context.getFrameSelf());
+        IRubyObject self = context.getFrameSelf();
+        if (self == null) {
+            Logger.error(SourceLocation.of(node), "self unresolved");
+            return Vertex.EMPTY;
+        } else
+            return createSingleTypeVertex(node, self);
     }
     
     public Object visitSplatNode(SplatNode node) {
@@ -1399,7 +1548,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitUndefNode(UndefNode node) {
         Logger.warn("undef is not supported yet.");
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitUntilNode(UntilNode node) {
@@ -1413,7 +1562,7 @@ public class Graph implements NodeVisitor {
     
     public Object visitVAliasNode(VAliasNode node) {
         RuntimeHelper.aliasGlobalVaraibles(this, node.getNewName(), node.getOldName());
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitVCallNode(VCallNode node) {
@@ -1425,7 +1574,7 @@ public class Graph implements NodeVisitor {
     public Object visitWhenNode(WhenNode node) {
         // never reach here
         unsupportedNode(node);
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public Object visitWhileNode(WhileNode node) {
@@ -1473,16 +1622,14 @@ public class Graph implements NodeVisitor {
             vertex.setPrivateVisibility(true);
             return RuntimeHelper.callSuper(this, vertex);
         }
-        return NULL_VERTEX;
+        return Vertex.EMPTY;
     }
 
     public boolean propagateVertex(Propagation propagation, Vertex dest, Vertex src) {
         // copy first to make sure variable assign can be revisited
-        dest.copyTypeSet(src);
+        dest.update(src);
 
-        if (propagation.checkVisited(dest)
-            // FIXME polymorphic objects update
-            /*|| dest.getTypeSet().containsAll(src.getTypeSet())*/) {
+        if (propagation.checkVisited(dest)) {
             return true;
         }
 
@@ -1499,31 +1646,45 @@ public class Graph implements NodeVisitor {
     public boolean propagateMultipleAsgnVertex(Propagation propagation, MultipleAsgnVertex dest, Vertex src) {
         if (propagation.checkVisited(dest)) { return true; }
 
-        Vertex valueVertex = dest.getValueVertex();
-        for (IRubyObject object : RuntimeHelper.arrayValue(propagation.getGraph(), valueVertex)) {
-            RuntimeHelper.multipleAssign(this, (MultipleAsgnNode) dest.getNode(), object);
+        if (dest.isChanged()) {
+            dest.markUnchanged();
+
+            for (IRubyObject object : RuntimeHelper.arrayValue(propagation.getGraph(), dest.getValueVertex())) {
+                RuntimeHelper.multipleAssign(this, (MultipleAsgnNode) dest.getNode(), object);
+            }
         }
+
+        // FIXME no need to propagate?
         return true;
     }
 
     public boolean propagateSplatVertex(Propagation propagation, SplatVertex dest, Vertex src) {
         if (propagation.checkVisited(dest)) { return true; }
 
-        RuntimeHelper.splatValue(this, dest);
+        if (dest.isChanged()) {
+            dest.markUnchanged();
+            RuntimeHelper.splatValue(this, dest);
+        }
         return propagateEdges(propagation, dest);
     }
 
     public boolean propagateToAryVertex(Propagation propagation, ToAryVertex dest, Vertex src) {
         if (propagation.checkVisited(dest)) { return true; }
 
-        RuntimeHelper.toAryValue(this, dest);
+        if (dest.isChanged()) {
+            dest.markUnchanged();
+            RuntimeHelper.toAryValue(this, dest);
+        }
         return propagateEdges(propagation, dest);
     }
 
     public boolean propagateSValueVertex(Propagation propagation, SValueVertex dest, Vertex src) {
         if (propagation.checkVisited(dest)) { return true; }
 
-        RuntimeHelper.aValueSplat(this, dest);
+        if (dest.isChanged()) {
+            dest.markUnchanged();
+            RuntimeHelper.aValueSplat(this, dest);
+        }
         return propagateEdges(propagation, dest);
     }
 
@@ -1544,7 +1705,7 @@ public class Graph implements NodeVisitor {
         if (propagation.checkVisited(dest)) { return true; }
 
         dest.getObject().setModified(true);
-        dest.copyTypeSet(src);
+        dest.update(src);
         return propagateEdges(propagation, dest);
     }
 

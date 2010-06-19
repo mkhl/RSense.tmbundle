@@ -1,4 +1,4 @@
-// $ANTLR 3.2 Sep 23, 2009 12:02:23 /home/tomo/src/rsense/src/org/cx4a/rsense/parser/TypeAnnotation.g 2010-03-21 00:25:01
+// $ANTLR 3.2 Sep 23, 2009 12:02:23 /home/tomo/src/rsense/src/org/cx4a/rsense/parser/TypeAnnotation.g 2010-05-11 15:09:13
 
 package org.cx4a.rsense.parser;
 

@@ -4,7 +4,19 @@ import java.util.Map;
 import java.util.HashMap;
 
 public class Ruby {
+    public static interface ObjectAllocator {
+        public IRubyObject allocate(Ruby runtime, RubyClass klass);
+    }
+
+    public static class DefaultObjectAllocator implements ObjectAllocator {
+        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
+            return new RubyObject(runtime, klass);
+        }
+    }
+
     private Context context;
+    private ObjectAllocator allocator;
+    private RubyModule kernelModule;
     private RubyClass objectClass, moduleClass, classClass,
         numericClass, integerClass, fixnumClass, bignumClass,
         floatClass, stringClass, symbolClass,
@@ -18,6 +30,8 @@ public class Ruby {
     private Map<String, IRubyObject> globalVars;
 
     public Ruby() {
+        allocator = new DefaultObjectAllocator();
+
         objectClass = RubyClass.newBootClass(this, "Object", null);
         moduleClass = RubyClass.newBootClass(this, "Module", objectClass);
         classClass = RubyClass.newBootClass(this, "Class", moduleClass);
@@ -31,6 +45,8 @@ public class Ruby {
         metaClass = moduleClass.makeMetaClass(metaClass);
         metaClass = classClass.makeMetaClass(metaClass);
 
+        kernelModule = RubyModule.newModule(this, "Kernel", null);
+        objectClass.includeModule(kernelModule);
         numericClass = RubyClass.newClass(this, "Numeric", objectClass);
         integerClass = RubyClass.newClass(this, "Integer", numericClass);
         fixnumClass = RubyClass.newClass(this, "Fixnum", integerClass);
@@ -51,6 +67,7 @@ public class Ruby {
         procClass = RubyClass.newClass(this, "Proc", objectClass);
         fatalClass = RubyClass.newClass(this, "fatal", exceptionClass);
 
+        objectClass.setConstant("Kernel", kernelModule);
         objectClass.setConstant("Object", objectClass);
         objectClass.setConstant("Module", moduleClass);
         objectClass.setConstant("Class", classClass);
@@ -84,6 +101,14 @@ public class Ruby {
         context = new Context(this);
     }
 
+    public Context getContext() {
+        return context;
+    }
+
+    public void setObjectAllocator(ObjectAllocator allocator) {
+        this.allocator = allocator;
+    }
+
     public IRubyObject getGlobalVar(String name) {
         return globalVars.get(name);
     }
@@ -91,11 +116,11 @@ public class Ruby {
     public void setGlobalVar(String name, IRubyObject value) {
         globalVars.put(name, value);
     }
-
-    public Context getContext() {
-        return context;
+    
+    public IRubyObject newInstance(RubyClass klass) {
+        return allocator.allocate(this, klass);
     }
-
+    
     public boolean isInstanceOf(IRubyObject object, RubyModule klass) {
         return object.getMetaClass() == klass;
     }
@@ -113,6 +138,10 @@ public class Ruby {
             return true;
         }
         return false;
+    }
+
+    public RubyModule getKernel() {
+        return kernelModule;
     }
 
     public RubyClass getObject() {

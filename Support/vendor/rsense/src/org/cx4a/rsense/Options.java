@@ -24,6 +24,14 @@ import org.cx4a.rsense.util.Logger;
 public class Options extends HashMap<String, List<String>> {
     private static final long serialVersionUID = 0L;
 
+    public static class InvalidOptionException extends RuntimeException {
+        private static final long serialVersionUID = 0L;
+
+        public InvalidOptionException(String msg) {
+            super(msg);
+        }
+    }
+
     private List<String> rest = new ArrayList<String>();
 
     public Options() {}
@@ -135,6 +143,14 @@ public class Options extends HashMap<String, List<String>> {
         }
     }
 
+    public int getLine() {
+        try {
+            return Integer.parseInt(getOption("line"));
+        } catch (NumberFormatException e) {
+            throw new InvalidOptionException("line number is not given with --line");
+        }
+    }
+
     public String getEndMark() {
         return getOption("end-mark");
     }
@@ -153,6 +169,17 @@ public class Options extends HashMap<String, List<String>> {
         }
         String level = getOption("log-level");
         return level != null ? Logger.Level.valueOf(level.toUpperCase()) : Logger.Level.MESSAGE;
+    }
+
+    public Integer getProgress() {
+        if (hasOption("progress")) {
+            try {
+                return Integer.parseInt(getOption("progress"));
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return null;
     }
 
     public String getRsenseHome() {
@@ -189,6 +216,10 @@ public class Options extends HashMap<String, List<String>> {
 
     public boolean isKeepEnv() {
         return hasOption("keep-env");
+    }
+
+    public boolean isTime() {
+        return hasOption("time");
     }
 
     public boolean isTest() {
@@ -250,6 +281,9 @@ public class Options extends HashMap<String, List<String>> {
         addOptions("gem-path", parent.getOptions("gem-path"));
         addOption("format", parent.getFormat());
         addOption("encoding", parent.getEncoding());
+        if (parent.isTime()) {
+            addOption("time");
+        }
         if (parent.isTestColor()) {
             addOption("test-color");
         }

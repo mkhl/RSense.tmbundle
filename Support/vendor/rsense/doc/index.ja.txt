@@ -1,10 +1,10 @@
-Title: RSense - Rubyのための最も優れた開発援助ツール
+Title: RSense - EmacsやVimなどに特化したRubyのための優れた開発援助ツール
 CSS: style.css
 
 RSense
 ======
 
-*[Ruby][]のための最も優れた開発援助ツール*
+*EmacsやVimに特化した[Ruby][]のための優れた開発援助ツール*
 
 \[[English](index.txt)]
 
@@ -17,20 +17,18 @@ RSense
 RSenseとは？
 ------------
 
-RSenseはJavaで書かれた[Ruby][]のための開発補助ツールです。[UNIXの思想][UNIX philosophy]に従うことで、RSenseはどこからでも簡単に使えるようになっています。EmacsやVimなどのエディタからも利用できます。RSenseは透明性を保つことで簡単に学習・拡張・修正できるよう設計されています。
+RSenseは[Emacs][]や[Vim][]などの高機能テキストエディタに特化した[Ruby][]のための開発援助ツールです。[UNIXの思想][UNIX philosophy]に従うことで高い透明性を実現し、ユーザーが簡単に学習・拡張・修正できるように設計されています。また、コピーレフトライセンス（GPLv3+）を採用することで、[自由なソフトウェア](http://www.gnu.org/philosophy/free-sw.html)であり続けることを保証しています。
 
 特徴
 ----
 
-現在利用可能な機能は以下のようになっています。
-
 * コード補完（メソッド名補完など）
 * 型検査
+* 定義元ジャンプ
 
-将来は以下の機能も利用可能になる予定です。
+将来的には以下の機能も利用可能になる予定です。
 
 * 静的コードチェック
-* 定義元ジャンプ
 * 呼び出し元ジャンプ
 * リファクタリング
 
@@ -49,7 +47,14 @@ RSenseはJavaで書かれた[Ruby][]のための開発補助ツールです。[U
 ダウンロード
 ------------
 
-### 最新安定板 ###
+### 最新安定板 (v0.3) ###
+
+[v0.3の変更点](changes-v0.3.ja.txt)
+
+* [rsense-0.3.tar.bz2](/pub/rsense/rsense-0.3.tar.bz2)
+* [rsense-0.3.zip](/pub/rsense/rsense-0.3.zip)
+
+### v0.2 ###
 
 * [rsense-0.2.tar.bz2](/pub/rsense/rsense-0.2.tar.bz2)
 * [rsense-0.2.zip](/pub/rsense/rsense-0.2.zip)
@@ -72,16 +77,23 @@ RSenseはJavaで書かれた[Ruby][]のための開発補助ツールです。[U
 * <http://cx4a.org/repo/rsense.git>
 * <http://github.com/m2ym/rsense> (GitHubミラー)
 
+バグレポート
+------------
+
+[RSenseのバグトラッキングシステム](http://cx4a.org/redmine/projects/rsense)に新しいチケットを登録してください。
+
 ライセンス
 ----------
 
-このソフトウェアは[GPLv3][]のもとで配布されます。
+このソフトウェアは[GPLv3][]+のもとで配布されます。
 
 開発
 ----
 
 どのような貢献も歓迎です。RSenseをハックしたい方はまず[開発ガイド](devel.txt)を読むことから始めるとよいでしょう。
 
+[Emacs]: http://www.gnu.org/software/emacs/
+[Vim]: http://www.vim.org/
 [Ruby]: http://www.ruby-lang.org/ "Ruby Programming Language"
 [UNIX philosophy]: http://en.wikipedia.org/wiki/Unix_philosophy
 [GPLv3]: http://gplv3.fsf.org/

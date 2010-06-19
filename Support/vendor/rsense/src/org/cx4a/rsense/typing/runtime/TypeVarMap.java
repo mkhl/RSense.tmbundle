@@ -26,11 +26,8 @@ public class TypeVarMap extends HashMap<TypeVariable, Vertex> {
     }
 
     public TypeVarMap[] generateTuples() {
-        TypeVariable[] keys = keySet().toArray(new TypeVariable[0]);
-        Vertex[] values = values().toArray(new Vertex[0]);
-
         int size = 1;
-        for (Vertex vertex : values) {
+        for (Vertex vertex : values()) {
             size *= vertex.getTypeSet().size();
         }
         if (size == 0) {
@@ -43,16 +40,16 @@ public class TypeVarMap extends HashMap<TypeVariable, Vertex> {
             result[i] = new TypeVarMap(size());
         }
 
-        for (int i = 0; i < values.length; i++) {
-            TypeSet typeSet = values[i].getTypeSet();
+        for (Map.Entry<TypeVariable, Vertex> entry : entrySet()) {
+            TypeSet typeSet = entry.getValue().getTypeSet();
             Iterator<IRubyObject> ite = typeSet.iterator();
             int k = 0, n = typeSet.size();
             int newUnit = unit / n;
             IRubyObject v = ite.next();
             for (int j = 0; j < size; j++) {
-                Vertex vertex = new Vertex();
+                Vertex vertex = new Vertex(1);
                 vertex.addType(v);
-                result[j].put(keys[i], vertex);
+                result[j].put(entry.getKey(), vertex);
                 if (++k == newUnit) {
                     k = 0;
                     if (!ite.hasNext()) {
@@ -73,5 +70,44 @@ public class TypeVarMap extends HashMap<TypeVariable, Vertex> {
             clone.put(entry.getKey(), new Vertex(null, new TypeSet(entry.getValue().getTypeSet())));
         }
         return clone;
+    }
+
+    @Override
+    public int hashCode() {
+        return hashCode(1);
+    }
+
+    public int hashCode(int depth) {
+        int code = 0;
+        for (Map.Entry<TypeVariable, Vertex> entry : entrySet()) {
+            code = (code ^ entry.getKey().hashCode()) * 13;
+            code = (code ^ entry.getValue().getTypeSet().hashCode(depth)) * 13;
+        }
+        return code;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other)
+            return true;
+
+        if (!(other instanceof TypeVarMap))
+            return false;
+
+        TypeVarMap o = (TypeVarMap) other;
+        if (size() != o.size())
+            return false;
+
+        Iterator<Map.Entry<TypeVariable, Vertex>> i = entrySet().iterator();
+        Iterator<Map.Entry<TypeVariable, Vertex>> j = o.entrySet().iterator();
+        while (i.hasNext() && j.hasNext()) {
+            Map.Entry<TypeVariable, Vertex> x = i.next();
+            Map.Entry<TypeVariable, Vertex> y = j.next();
+            if (!x.getKey().equals(y.getKey())
+                || !x.getValue().getTypeSet().equals(y.getValue().getTypeSet()))
+                return false;
+        }
+
+        return true;
     }
 }

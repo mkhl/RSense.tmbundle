@@ -107,7 +107,7 @@ public class RuntimeHelper {
             return argumentAssign(graph, (ArgumentNode) node, src);
         }
         Logger.error("unknown assignable node: %s", node);
-        return Graph.NULL_VERTEX;
+        return Vertex.EMPTY;
     }
     
     public static Vertex localAssign(Graph graph, LocalAsgnNode node) {
@@ -201,7 +201,7 @@ public class RuntimeHelper {
     }
 
     public static Vertex classVarAssign(Graph graph, ClassVarAsgnNode node, Vertex src) {
-        RubyClass klass = (RubyClass) graph.getRuntime().getContext().getFrameModule();
+        RubyModule klass = graph.getRuntime().getContext().getFrameModule();
         if (src == null) {
             src = graph.createVertex(node.getValueNode());
         }
@@ -217,7 +217,7 @@ public class RuntimeHelper {
     }
 
     public static Vertex classVariable(Graph graph, ClassVarNode node) {
-        RubyClass klass = (RubyClass) graph.getRuntime().getContext().getFrameModule();
+        RubyModule klass = graph.getRuntime().getContext().getFrameModule();
         VertexHolder holder = (VertexHolder) klass.getClassVar(node.getName());
         if (holder == null) {
             holder = graph.createFreeVertexHolder();
@@ -304,6 +304,9 @@ public class RuntimeHelper {
     }
 
     public static void blockAssign(Graph graph, BlockArgNode node, Block block) {
+        if (block == null)
+            return;
+        
         Scope scope = graph.getRuntime().getContext().getCurrentScope();
         VertexHolder holder = (VertexHolder) scope.getValue(node.getName());
         if (holder == null) {
@@ -323,7 +326,7 @@ public class RuntimeHelper {
             int size = pre.size();
             for (int i = 0; i < size; i++) {
                 Node next = pre.get(i);
-                Vertex arg = i < args.length ? args[i] : Graph.NULL_VERTEX;
+                Vertex arg = i < args.length ? args[i] : Vertex.EMPTY;
                 assign(graph, next, arg);
             }
         }
@@ -334,7 +337,7 @@ public class RuntimeHelper {
                 Node next = post.get(i);
                 Vertex arg = argsLength - postCount + i < args.length
                     ? args[argsLength - postCount + i]
-                    : Graph.NULL_VERTEX;
+                    : Vertex.EMPTY;
                 if (next instanceof AssignableNode) {
                     assign(graph, next, arg);
                 } else {
@@ -377,7 +380,7 @@ public class RuntimeHelper {
         VertexHolder holder = graph.createFreeVertexHolder();
         scope.setValue(node.getName(), holder);
         if (src != null) {
-            graph.addEdgeAndCopyTypeSet(src, holder.getVertex());
+            graph.addEdgeAndUpdate(src, holder.getVertex());
         }
         return src;
     }
@@ -398,7 +401,7 @@ public class RuntimeHelper {
     public static void multipleAssign(Graph graph, MultipleAsgnNode node, IRubyObject object) {
         boolean isArray = object instanceof Array;
         Array array = null;
-        Vertex element = Graph.NULL_VERTEX;
+        Vertex element = Vertex.EMPTY;
 
         if (isArray) {
             array = (Array) object;
@@ -497,7 +500,9 @@ public class RuntimeHelper {
     }
     
     private static Vertex call(Graph graph, CallVertex vertex, boolean callSuper) {
-        if (vertex.isApplicable()) {
+        if (vertex.isApplicable() && vertex.isChanged()) {
+            vertex.markUnchanged();
+
             String name = vertex.getName();
             TypeSet receivers = vertex.getReceiverVertex().getTypeSet();
             Block block = vertex.getBlock();
@@ -532,14 +537,18 @@ public class RuntimeHelper {
                     }
                 }
 
-                //Logger.debug("try to apply template: %s", name);
                 List<TemplateAttribute> attrs = generateTemplateAttributes(receivers, args, block);
+                boolean applied = false;
                 for (TemplateAttribute attr : attrs) {
                     Vertex returnVertex = applyTemplateAttribute(graph, vertex, name, attr, callSuper);
-                    if (returnVertex != null && !noReturn) {
-                        accumulator.addAll(returnVertex.getTypeSet());
+                    if (returnVertex != null) {
+                        applied = true;
+                        if (!noReturn)
+                            accumulator.addAll(returnVertex.getTypeSet());
                     }
                 }
+                if (!applied)
+                    graph.notifyMethodMissingEvent(vertex);
                 if (result.isNextMethodChange()) {
                     name = result.getNextMethodName();
                     receivers = result.getNextMethodReceivers();
@@ -550,22 +559,22 @@ public class RuntimeHelper {
                 }
             }
 
-            vertex.getTypeSet().addAll(accumulator);
+            vertex.addTypes(accumulator);
         }
         return vertex;
     }
 
     public static void methodPartialUpdate(Graph graph, MethodDefNode node, DynamicMethod newMethod, DynamicMethod oldMethod, IRubyObject receiver) {
-        if (newMethod instanceof DefaultMethod && oldMethod instanceof DefaultMethod) {
-            DefaultMethod newmeth = (DefaultMethod) newMethod;
-            DefaultMethod oldmeth = (DefaultMethod) oldMethod;
+        if (newMethod instanceof Method && oldMethod instanceof Method) {
+            Method newmeth = (Method) newMethod;
+            Method oldmeth = (Method) oldMethod;
             NodeDiff nodeDiff = graph.getNodeDiff();
 
             if (nodeDiff != null
                 && nodeDiff.noDiff(node.getArgsNode(), oldmeth.getArgsNode())
                 && nodeDiff.noDiff(node.getBodyNode(), oldmeth.getBodyNode())) { // XXX nested class, defn
                 // FIXME annotation diff
-                newmeth.shareTemplates(oldmeth.getTemplates());
+                newmeth.shareTemplates(oldmeth);
             } else {
                 Logger.debug(SourceLocation.of(node), "templates not shared: %s", newmeth);
             }
@@ -605,9 +614,9 @@ public class RuntimeHelper {
         Logger.debug(SourceLocation.of(node), "dummy call: %s", method);
     }
 
-    public static void dummyCallForTemplates(Graph graph, MethodDefNode node, Method method, Map<TemplateAttribute, Template> templates) {
+    public static void dummyCallForTemplates(Graph graph, MethodDefNode node, Method method, Collection<TemplateAttribute> templateAttributes) {
         String name = node.getName();
-        for (TemplateAttribute attr : templates.keySet()) {
+        for (TemplateAttribute attr : templateAttributes) {
             createTemplate(graph, null, name, method, attr);
         }
         Logger.debug(SourceLocation.of(node), "template dummy call: %s", method);
@@ -677,7 +686,7 @@ public class RuntimeHelper {
 
         Vertex ret = method.call(graph, template, receiver, args, argVertices, block);
         if (ret != null && result != AnnotationResolver.Result.RESOLVED) {
-            graph.addEdgeAndCopyTypeSet(ret, returnVertex);
+            graph.addEdgeAndUpdate(ret, returnVertex);
         }
 
         context.popScope();
@@ -783,7 +792,7 @@ public class RuntimeHelper {
     
     public static Vertex yield(Graph graph, Block block, Collection<IRubyObject> args, boolean expanded, Vertex returnVertex) {
         if (block == null) {
-            return Graph.NULL_VERTEX;
+            return Vertex.EMPTY;
         }
         Ruby runtime = graph.getRuntime();
         Context context = runtime.getContext();
@@ -859,30 +868,37 @@ public class RuntimeHelper {
     }
 
     public static Vertex yield(Graph graph, YieldVertex vertex) {
-        Template template = vertex.getTemplate();
-        if (template == null) {
-            return vertex;
-        }
+        Vertex returnVertex = null;
+        if (vertex.getTemplate() != null)
+            returnVertex = vertex.getTemplate().getReturnVertex();
 
+        // return immediately if no need to apply
         Proc block = (Proc) vertex.getBlock();
         Vertex argsVertex = vertex.getArgsVertex();
-        Vertex returnVertex = yield(graph, block, (argsVertex != null ? argsVertex.getTypeSet() : TypeSet.EMPTY), vertex.getExpandArguments(), template.getReturnVertex());
-        if (returnVertex != null) {
-            graph.addEdgeAndCopyTypeSet(returnVertex, vertex);
+        if (block != null
+            && block.isApplied(vertex)
+            && (argsVertex == null
+                || !argsVertex.isChanged())) {
+            return vertex;
         }
-        
-        if (block != null) {
+        if (argsVertex != null)
+            argsVertex.markUnchanged();
+
+        if (block != null)
             block.recordYield(vertex);
-        }
+        returnVertex = yield(graph, block, (argsVertex != null ? argsVertex.getTypeSet() : TypeSet.EMPTY), vertex.getExpandArguments(), returnVertex);
+        if (returnVertex != null)
+            graph.addEdgeAndUpdate(returnVertex, vertex);
+        
         return vertex;
     }
 
     public static void splatValue(Graph graph, SplatVertex vertex) {
-        vertex.getTypeSet().addAll(arrayValue(graph, vertex.getValueVertex()));
+        vertex.addTypes(arrayValue(graph, vertex.getValueVertex()));
     }
 
     public static void toAryValue(Graph graph, ToAryVertex vertex) {
-        vertex.getTypeSet().addAll(arrayValue(graph, vertex.getValueVertex()));
+        vertex.addTypes(arrayValue(graph, vertex.getValueVertex()));
     }
 
     public static TypeSet arrayValue(Graph graph, Vertex vertex) {
@@ -912,7 +928,7 @@ public class RuntimeHelper {
                     Array array = (Array) object;
                     if (!array.isModified()) {
                         if (array.length() == 1) {
-                            vertex.copyTypeSet(array.getElement(0));
+                            vertex.update(array.getElement(0));
                         } else {
                             vertex.addType(object);
                         }
@@ -922,7 +938,7 @@ public class RuntimeHelper {
                 TypeVariable var = TypeVariable.valueOf("t");
                 TypeVarMap tvmap = getTypeVarMap(object);
                 if (tvmap != null && tvmap.containsKey(var)) {
-                    vertex.copyTypeSet(tvmap.get(var));
+                    vertex.update(tvmap.get(var));
                 }
             }
         }
@@ -932,7 +948,8 @@ public class RuntimeHelper {
         if (node instanceof Colon2ImplicitNode) {
             return graph.getRuntime().getContext().getFrameModule();
         } else if (node instanceof Colon2Node) {
-            IRubyObject object = graph.createVertex(((Colon2Node) node).getLeftNode()).singleType();
+            Vertex left = graph.createVertex(((Colon2Node) node).getLeftNode());
+            IRubyObject object = left.singleType();
             if (object instanceof RubyModule) {
                 return (RubyModule) object;
             } else {
@@ -990,7 +1007,7 @@ public class RuntimeHelper {
                 klass = (RubyModule) metaClass.getAttached();
             }
         }
-        if (klass.getTag() instanceof ClassTag) {
+        if (klass != null && klass.getTag() instanceof ClassTag) {
             return (ClassTag) klass.getTag();
         } else {
             return null;
